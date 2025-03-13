@@ -305,8 +305,8 @@ class AmazonProcessor(tk.Tk):
             if total_amount is not None:
                 # 弹出提示框让用户确认
                 confirm = messagebox.askyesno(
-                    "金额确认",
-                    f"amount 列的总和为: {total_amount:.2f}\n是否继续处理？"
+                    "Amount Confirmation",
+                    f"Total amount: {total_amount:.2f}\ncontinue processing？"
                 )
                 if not confirm:
                     return  # 用户取消操作
