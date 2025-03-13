@@ -97,23 +97,81 @@ def process_order_data(raw_df):
             aggfunc='sum',
             fill_value=0
         ).reset_index()
-        
-        # 动态列处理
+
+        # ==================== 新增功能 ====================
+        # 定义所有可能需要的列
         required_columns = [
-            "Principal:ItemPrice", "Tax:ItemPrice", "Shipping:ItemPrice",
-            "MarketplaceFacilitatorTax-Principal:ItemWithheldTax",
-            "ShippingTax:ItemPrice", "MarketplaceFacilitatorTax-Shipping:ItemWithheldTax",
-            # ...（其他列保持不变）
+            "Principal:ItemPrice", "Principal:Promotion",
+            "Tax:ItemPrice", "MarketplaceFacilitatorTax-Principal:ItemWithheldTax",
+            "MarketplaceFacilitatorVAT-Principal:ItemWithheldTax",
+            "LowValueGoodsTax-Principal:ItemWithheldTax",
+            "Shipping:ItemPrice", "Shipping:Promotion",
+            "GiftWrap:ItemPrice", "GiftWrap:Promotion",
+            "GiftWrapTax:ItemPrice", "MarketplaceFacilitatorTax-Other:ItemWithheldTax"
         ]
+
+        # 确保所有列存在
+        existing_columns = pivot_df.columns.tolist()
         for col in required_columns:
-            if col not in pivot_df.columns:
+            if col not in existing_columns:
                 pivot_df[col] = 0
-                
-        # 税款计算
-        tax_cols = [c for c in pivot_df.columns if "Tax" in c and "Withheld" in c]
-        pivot_df['Shipping Tax'] = pivot_df[tax_cols].sum(axis=1)
+
+        # 1. 计算Product Amount并删除原列
+        pivot_df['Product Amount'] = pivot_df['Principal:ItemPrice'] + pivot_df['Principal:Promotion']
+        pivot_df = pivot_df.drop(['Principal:ItemPrice', 'Principal:Promotion'], axis=1, errors='ignore')
+
+        # 2. 计算Product Tax并删除原列
+        product_tax_cols = [
+            'Tax:ItemPrice',
+            'MarketplaceFacilitatorTax-Principal:ItemWithheldTax',
+            'MarketplaceFacilitatorVAT-Principal:ItemWithheldTax',
+            'LowValueGoodsTax-Principal:ItemWithheldTax'
+        ]
+        pivot_df['Product Tax'] = pivot_df[product_tax_cols].sum(axis=1)
+        pivot_df = pivot_df.drop(product_tax_cols, axis=1, errors='ignore')
+
+        # 3. 计算Shipping并删除原列
+        pivot_df['Shipping'] = pivot_df['Shipping:ItemPrice'] + pivot_df['Shipping:Promotion']
+        pivot_df = pivot_df.drop(['Shipping:ItemPrice', 'Shipping:Promotion'], axis=1, errors='ignore')
+
+        # 4. 计算Giftwrap并删除原列
+        pivot_df['Giftwrap'] = pivot_df['GiftWrap:ItemPrice'] + pivot_df['GiftWrap:Promotion']
+        pivot_df = pivot_df.drop(['GiftWrap:ItemPrice', 'GiftWrap:Promotion'], axis=1, errors='ignore')
+
+        # 5. 计算Giftwrap Tax并删除原列
+        giftwrap_tax_cols = [
+            'GiftWrapTax:ItemPrice',
+            'MarketplaceFacilitatorTax-Other:ItemWithheldTax'
+        ]
+        pivot_df['Giftwrap Tax'] = pivot_df[giftwrap_tax_cols].sum(axis=1)
+        pivot_df = pivot_df.drop(giftwrap_tax_cols, axis=1, errors='ignore')
+
+        # 6. 计算总计金额
+        pivot_df['Total_amount'] = pivot_df[['Product Tax', 'Product Amount', 'Giftwrap', 'Giftwrap Tax']].sum(axis=1)
         
-        return pivot_df.sort_values("shipment-id")
+        # 7. 计算运费总计（需要先确保Shipping Tax列存在）
+        if 'Shipping Tax' not in pivot_df.columns:
+            pivot_df['Shipping Tax'] = 0
+        pivot_df['Total_shipping'] = pivot_df['Shipping'] + pivot_df['Shipping Tax']
+
+        # 8. 计算税率（带除零保护）
+        pivot_df['tax_rate'] = np.where(
+            pivot_df['Product Amount'] != 0,
+            (pivot_df['Product Tax'] / pivot_df['Product Amount']).round(2),
+            0
+        )
+        # 转换为百分比格式
+        pivot_df['tax_rate'] = pivot_df['tax_rate'].apply(lambda x: f"{x:.0%}")
+
+        # 9. 最终列顺序
+        final_columns = [
+            'order-id', 'shipment-id', 'sku',
+            'Product Amount', 'Product Tax', 'tax_rate',
+            'Shipping', 'Shipping Tax', 'Total_shipping',
+            'Giftwrap', 'Giftwrap Tax', 'Total_amount'
+        ]
+        
+        return pivot_df[final_columns].sort_values("shipment-id")
 
     except Exception as e:
         messagebox.showerror("处理错误", f"订单表处理失败:\n{str(e)}")
