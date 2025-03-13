@@ -5,8 +5,40 @@ import pandas as pd
 from datetime import datetime
 import numpy as np
 
+# ================================ 新增功能函数 ================================
+def generate_summary(raw_df):
+    """生成交易类型汇总表（含总计行）"""
+    try:
+        # 验证必要列存在
+        required_cols = ['transaction-type', 'amount-type', 'amount']
+        missing_cols = [col for col in required_cols if col not in raw_df.columns]
+        if missing_cols:
+            messagebox.showwarning("列缺失", f"缺少必要列: {', '.join(missing_cols)}")
+            return None
+        
+        # 创建数据透视表
+        df = raw_df[required_cols].copy()
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+        
+        # 生成带总计的数据透视表
+        pivot = df.pivot_table(
+            index=['amount-type'],
+            columns=['transaction-type'],
+            values='amount',
+            aggfunc='sum',
+            fill_value=0,
+            margins=True,          # 启用总计
+            margins_name='Grand Total'  # 总计行名称
+        )
+        
+        # 格式化输出
+        return pivot.round(2).reset_index()
+        
+    except Exception as e:
+        messagebox.showerror("汇总错误", f"生成汇总表失败:\n{str(e)}")
+        return None
 
-# ================================ 数据处理函数 ================================
+# ================================ 原有数据处理函数 ================================
 def process_qty_data(file_path, start_date, end_date):
     """处理数量表(qty)的完整逻辑"""
     try:
@@ -65,7 +97,6 @@ def process_qty_data(file_path, start_date, end_date):
         messagebox.showerror("处理错误", f"数量表处理失败:\n{str(e)}")
         return None, None, None
 
-
 def process_order_data(raw_df):
     """处理订单表(order)的增强逻辑"""
     try:
@@ -100,7 +131,7 @@ def process_order_data(raw_df):
             fill_value=0
         ).reset_index()
 
-        # ==================== 新增功能 ====================
+        # ==================== 原有功能 ====================
         # 定义所有可能需要的列
         required_columns = [
             "Principal:ItemPrice", "Principal:Promotion",
@@ -179,8 +210,7 @@ def process_order_data(raw_df):
         messagebox.showerror("处理错误", f"订单表处理失败:\n{str(e)}")
         return None
 
-
-# ================================ GUI界面类 ================================
+# ================================ 原有GUI类 ================================
 class AmazonProcessor(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -275,8 +305,8 @@ class AmazonProcessor(tk.Tk):
             if total_amount is not None:
                 # 弹出提示框让用户确认
                 confirm = messagebox.askyesno(
-                    "Amount Confimation",
-                    f"Total amount: {total_amount:.2f}\nContinue processing?？"
+                    "金额确认",
+                    f"amount 列的总和为: {total_amount:.2f}\n是否继续处理？"
                 )
                 if not confirm:
                     return  # 用户取消操作
@@ -340,11 +370,15 @@ class AmazonProcessor(tk.Tk):
             return
         
         try:
-            # 获取日期参数
-            start_date = self.start_cal.get_date()
-            end_date = self.end_cal.get_date()
+            # 读取原始数据
+            raw_df = pd.read_csv(self.file_path.get(), delimiter='\t').iloc[1:]
+            
+            # 生成汇总表
+            summary_df = generate_summary(raw_df)
             
             # 处理数量表
+            start_date = self.start_cal.get_date()
+            end_date = self.end_cal.get_date()
             qty_df, file_min, file_max = process_qty_data(
                 self.file_path.get(),
                 datetime.strptime(start_date, "%Y-%m-%d"),
@@ -352,11 +386,15 @@ class AmazonProcessor(tk.Tk):
             )
             
             # 处理订单表
-            raw_df = pd.read_csv(self.file_path.get(), delimiter='\t').iloc[1:]
             order_df = process_order_data(raw_df)
             
             # 保存结果
             with pd.ExcelWriter(self.save_path.get()) as writer:
+                # 写入汇总表
+                if summary_df is not None:
+                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                
+                # 写入原有工作表
                 qty_df.to_excel(writer, sheet_name='qty', index=False)
                 order_df.to_excel(writer, sheet_name='order', index=False)
                 
@@ -369,7 +407,6 @@ class AmazonProcessor(tk.Tk):
             
         except Exception as e:
             messagebox.showerror("处理错误", f"数据处理失败:\n{str(e)}")
-
 
 # ================================ 主程序入口 ================================
 if __name__ == "__main__":
