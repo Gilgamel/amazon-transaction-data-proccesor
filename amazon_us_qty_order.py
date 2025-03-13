@@ -6,33 +6,44 @@ from datetime import datetime
 import numpy as np
 
 # ================================ 新增功能函数 ================================
-def generate_summary(raw_df):
+def generate_summary(raw_df, start_date, end_date):
     """生成交易类型汇总表（含总计行）"""
     try:
         # 验证必要列存在
-        required_cols = ['transaction-type', 'amount-type', 'amount']
+        required_cols = ['transaction-type', 'amount-type', 'amount', 'posted-date']
         missing_cols = [col for col in required_cols if col not in raw_df.columns]
         if missing_cols:
             messagebox.showwarning("列缺失", f"缺少必要列: {', '.join(missing_cols)}")
             return None
         
-        # 创建数据透视表
-        df = raw_df[required_cols].copy()
-        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+        # 转换日期列
+        raw_df['posted-date'] = pd.to_datetime(raw_df['posted-date'], errors='coerce')
+        raw_df = raw_df.dropna(subset=['posted-date'])
         
-        # 生成带总计的数据透视表
-        pivot = df.pivot_table(
-            index=['amount-type'],
-            columns=['transaction-type'],
-            values='amount',
-            aggfunc='sum',
-            fill_value=0,
-            margins=True,          # 启用总计
-            margins_name='Grand Total'  # 总计行名称
-        )
+        # 筛选日期范围内的数据
+        mask = (raw_df['posted-date'] >= start_date) & (raw_df['posted-date'] <= end_date)
+        df = raw_df[mask].copy()
         
-        # 格式化输出
-        return pivot.round(2).reset_index()
+        # 按月份拆分数据
+        df['month'] = df['posted-date'].dt.to_period('M')
+        months = df['month'].unique()
+        
+        # 生成两个数据透视表
+        pivot_tables = []
+        for month in months:
+            month_df = df[df['month'] == month]
+            pivot = month_df.pivot_table(
+                index=['amount-type'],
+                columns=['transaction-type'],
+                values='amount',
+                aggfunc='sum',
+                fill_value=0,
+                margins=True,
+                margins_name='Grand Total'
+            )
+            pivot_tables.append((month, pivot.round(2).reset_index()))
+        
+        return pivot_tables
         
     except Exception as e:
         messagebox.showerror("汇总错误", f"生成汇总表失败:\n{str(e)}")
@@ -306,7 +317,7 @@ class AmazonProcessor(tk.Tk):
                 # 弹出提示框让用户确认
                 confirm = messagebox.askyesno(
                     "Amount Confirmation",
-                    f"Total amount: {total_amount:.2f}\ncontinue processing？"
+                    f"Total amount: {total_amount:.2f}\nContinue processing？"
                 )
                 if not confirm:
                     return  # 用户取消操作
@@ -373,16 +384,18 @@ class AmazonProcessor(tk.Tk):
             # 读取原始数据
             raw_df = pd.read_csv(self.file_path.get(), delimiter='\t').iloc[1:]
             
+            # 获取日期参数
+            start_date = datetime.strptime(self.start_cal.get_date(), "%Y-%m-%d")
+            end_date = datetime.strptime(self.end_cal.get_date(), "%Y-%m-%d")
+            
             # 生成汇总表
-            summary_df = generate_summary(raw_df)
+            pivot_tables = generate_summary(raw_df, start_date, end_date)
             
             # 处理数量表
-            start_date = self.start_cal.get_date()
-            end_date = self.end_cal.get_date()
             qty_df, file_min, file_max = process_qty_data(
                 self.file_path.get(),
-                datetime.strptime(start_date, "%Y-%m-%d"),
-                datetime.strptime(end_date, "%Y-%m-%d")
+                start_date,
+                end_date
             )
             
             # 处理订单表
@@ -391,10 +404,19 @@ class AmazonProcessor(tk.Tk):
             # 保存结果
             with pd.ExcelWriter(self.save_path.get()) as writer:
                 # 写入汇总表
-                if summary_df is not None:
-                    summary_df.to_excel(writer, sheet_name='Summary', index=False)
+                if pivot_tables:
+                    start_row = 0
+                    for month, pivot in pivot_tables:
+                        pivot.to_excel(
+                            writer,
+                            sheet_name='Summary',
+                            index=False,
+                            startrow=start_row,
+                            float_format="%.2f"
+                        )
+                        start_row += len(pivot) + 3  # 添加空行分隔
                 
-                # 写入原有工作表
+                # 写入其他工作表
                 qty_df.to_excel(writer, sheet_name='qty', index=False)
                 order_df.to_excel(writer, sheet_name='order', index=False)
                 
@@ -402,7 +424,7 @@ class AmazonProcessor(tk.Tk):
                 "处理完成",
                 f"成功生成报表！\n"
                 f"文件日期范围: {file_min.date()} 至 {file_max.date()}\n"
-                f"筛选日期范围: {start_date} 至 {end_date}"
+                f"筛选日期范围: {start_date.date()} 至 {end_date.date()}"
             )
             
         except Exception as e:
