@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime
 import numpy as np
 
+
 # ================================ 数据处理函数 ================================
 def process_qty_data(file_path, start_date, end_date):
     """处理数量表(qty)的完整逻辑"""
@@ -181,9 +182,12 @@ def process_order_data(raw_df):
 class AmazonProcessor(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("亚马逊数据处理器 v3.0")
-        self.geometry("900x800")
+        self.title("US Amazon Processor v3.0")
+        self.geometry("600x500")
         self.configure(bg="#f0f0f0")
+
+        # 设置窗口图标
+        self.iconbitmap(r"C:\Users\vuser\My Drive\Documents\Projects\Amazon\icon\app.ico")  # 替换为你的 .ico 文件路径
         
         # 初始化变量
         self.file_path = tk.StringVar()
@@ -197,19 +201,19 @@ class AmazonProcessor(tk.Tk):
     def create_widgets(self):
         """创建界面组件"""
         # 文件选择区域
-        file_frame = self.create_label_frame(" 文件选择 ", 0)
-        tk.Label(file_frame, text="源文件:", bg="#f0f0f0").grid(row=0, column=0)
+        file_frame = self.create_label_frame("Input", 0)
+        tk.Label(file_frame, text="Input Path:", bg="#f0f0f0").grid(row=0, column=0)
         tk.Entry(file_frame, textvariable=self.file_path, width=55).grid(row=0, column=1)
-        tk.Button(file_frame, text="浏览", command=self.load_file, width=10).grid(row=0, column=2)
+        tk.Button(file_frame, text="Browse", command=self.load_file, width=10).grid(row=0, column=2)
         
         # 保存路径区域
-        save_frame = self.create_label_frame(" 输出设置 ", 1)
-        tk.Label(save_frame, text="保存路径:", bg="#f0f0f0").grid(row=0, column=0)
+        save_frame = self.create_label_frame("Output", 1)
+        tk.Label(save_frame, text="Output Path:", bg="#f0f0f0").grid(row=0, column=0)
         tk.Entry(save_frame, textvariable=self.save_path, width=55).grid(row=0, column=1)
-        tk.Button(save_frame, text="浏览", command=self.save_file, width=10).grid(row=0, column=2)
+        tk.Button(save_frame, text="Browse", command=self.save_file, width=10).grid(row=0, column=2)
         
         # 日期选择区域
-        date_frame = self.create_label_frame(" 日期范围 ", 2)
+        date_frame = self.create_label_frame("Date Range", 2)
         self.start_cal = Calendar(
             date_frame, 
             date_pattern="y-mm-dd",
@@ -226,7 +230,7 @@ class AmazonProcessor(tk.Tk):
         self.end_cal.grid(row=1, column=1, padx=10)
         
         # 处理按钮
-        tk.Button(self, text="开始处理", command=self.process_data,
+        tk.Button(self, text="Submit", command=self.process_data,
                  font=('Arial',12), bg="#2196F3", fg="white",
                  width=20).pack(pady=20)
     
