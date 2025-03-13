@@ -65,6 +65,7 @@ def process_qty_data(file_path, start_date, end_date):
         messagebox.showerror("处理错误", f"数量表处理失败:\n{str(e)}")
         return None, None, None
 
+
 def process_order_data(raw_df):
     """处理订单表(order)的增强逻辑"""
     try:
@@ -178,6 +179,7 @@ def process_order_data(raw_df):
         messagebox.showerror("处理错误", f"订单表处理失败:\n{str(e)}")
         return None
 
+
 # ================================ GUI界面类 ================================
 class AmazonProcessor(tk.Tk):
     def __init__(self):
@@ -247,6 +249,20 @@ class AmazonProcessor(tk.Tk):
         frame.pack(pady=10, padx=15, fill="x")
         return frame
     
+    def calculate_amount_sum(self, file_path):
+        """计算 amount 列的总和"""
+        try:
+            df = pd.read_csv(file_path, delimiter='\t')
+            if 'amount' in df.columns:
+                total_amount = df['amount'].sum()
+                return total_amount
+            else:
+                messagebox.showwarning("警告", "文件中未找到 amount 列")
+                return None
+        except Exception as e:
+            messagebox.showerror("错误", f"计算 amount 总和失败:\n{str(e)}")
+            return None
+    
     def load_file(self):
         """加载文件并精确更新日期范围"""
         path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
@@ -254,6 +270,17 @@ class AmazonProcessor(tk.Tk):
         
         self.file_path.set(path)
         try:
+            # 计算 amount 列的总和
+            total_amount = self.calculate_amount_sum(path)
+            if total_amount is not None:
+                # 弹出提示框让用户确认
+                confirm = messagebox.askyesno(
+                    "Amount Confimation",
+                    f"Total amount: {total_amount:.2f}\nContinue processing?？"
+                )
+                if not confirm:
+                    return  # 用户取消操作
+
             # 优化读取：只读取日期列
             df = pd.read_csv(
                 path,
@@ -342,6 +369,7 @@ class AmazonProcessor(tk.Tk):
             
         except Exception as e:
             messagebox.showerror("处理错误", f"数据处理失败:\n{str(e)}")
+
 
 # ================================ 主程序入口 ================================
 if __name__ == "__main__":
