@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['amazon_us_qty_order.py'],
+    ['src\\amazon_us_qty_order.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('resources/icon', 'resources/icon')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['icon\\app.ico'],
+    icon=['resources\\icon\\app.ico'],
 )

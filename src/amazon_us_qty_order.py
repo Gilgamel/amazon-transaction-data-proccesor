@@ -4,6 +4,22 @@ from tkcalendar import Calendar
 import pandas as pd
 from datetime import datetime
 import numpy as np
+import os
+import sys
+
+def get_resource_path(relative_path):
+    """获取资源文件的路径，兼容开发模式和打包后的exe模式"""
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS  # PyInstaller 解压后的临时目录
+    else:
+        base_path = os.path.abspath(".")  # 当前脚本所在目录
+    full_path = os.path.join(base_path, relative_path)
+    print(f"[Debug] 计算出的路径: {full_path}")  # 打印出路径
+    return full_path
+
+# 获取图标路径
+icon_path = get_resource_path("resources/icon/app.ico")
+
 
 # ================================ 核心功能函数 ================================
 def generate_summary(raw_df, start_date, end_date):
@@ -215,16 +231,45 @@ def process_order_data(raw_df):
 class AmazonProcessor(tk.Tk):
     def __init__(self):
         super().__init__()
+
+        try:
+            if getattr(sys, 'frozen', False):
+                # 打包后的路径：sys._MEIPASS 指向临时资源目录
+                base_path = sys._MEIPASS
+                print("[Debug] 运行模式: 打包模式")
+            else:
+                # 开发模式：从 src 目录向上返回一级到项目根目录
+                current_dir = os.path.dirname(os.path.abspath(__file__))  # src 目录
+                base_path = os.path.dirname(current_dir)                   # 项目根目录
+                print("[Debug] 运行模式: 开发模式")
+
+            # 计算图标路径
+            icon_path = os.path.join(base_path, "resources", "icon", "app.ico")
+            icon_path = os.path.normpath(icon_path)
+
+            # 调试输出
+            print(f"[Debug] 项目根目录: {base_path}")
+            print(f"[Debug] 图标路径: {icon_path}")
+            print(f"[Debug] 文件是否存在: {os.path.exists(icon_path)}")
+
+            # 加载图标
+            self.iconbitmap(icon_path)
+
+        except Exception as e:
+            messagebox.showwarning(
+                "图标加载失败",
+                f"错误原因: {str(e)}\n"
+                f"base_path: {base_path}\n"
+                f"icon_path: {icon_path}"
+            )
+
         self.title("US Amazon Processor v3.1")
-        self.geometry("600x500")
+        self.geometry("550x470")
         self.configure(bg="#f0f0f0")
-        self.iconbitmap(r"C:\Users\vuser\My Drive\Documents\Projects\Amazon\icon\app.ico")
-        
         self.file_path = tk.StringVar()
         self.save_path = tk.StringVar()
         self.true_min_date = datetime(2020,1,1)
         self.true_max_date = datetime.now()
-        
         self.create_widgets()
         
     def create_widgets(self):
@@ -386,3 +431,4 @@ class AmazonProcessor(tk.Tk):
 if __name__ == "__main__":
     app = AmazonProcessor()
     app.mainloop()
+
