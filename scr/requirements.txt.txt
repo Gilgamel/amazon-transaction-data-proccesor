@@ -1,0 +1,5 @@
+pandas==1.5.3
+numpy==1.23.5
+tkcalendar==1.6.1
+openpyxl==3.0.10
+PyInstaller==5.7.0
