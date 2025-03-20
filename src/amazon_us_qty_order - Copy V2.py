@@ -20,8 +20,43 @@ def get_resource_path(relative_path):
 # 获取图标路径
 icon_path = get_resource_path("resources/icon/app.ico")
 
+# ================================ 新增合并逻辑 ================================
+def merge_order_qty(order_df, qty_df):
+    """合并 Order 和 QTY 数据（三键 LEFT JOIN）"""
+    try:
+        # 定义合并键
+        merge_keys = ['order-id', 'shipment-id', 'sku']
+        
+        # 检查必需列是否存在
+        for df, name in [(order_df, 'Order'), (qty_df, 'QTY')]:
+            missing = [col for col in merge_keys if col not in df.columns]
+            if missing:
+                raise ValueError(f"{name}表缺少关键列: {', '.join(missing)}")
+        
+        # 执行 LEFT JOIN（修复括号未闭合错误）
+        merged_df = pd.merge(
+            order_df,
+            qty_df[merge_keys + ['quantity-purchased']],  # 只保留qty的必需列
+            on=merge_keys,
+            how='left',
+            suffixes=('_order', '_qty')  # <- 这里补上缺失的右括号
+        )  # 这是修复的关键
+        
+        # 重命名quantity列
+        if 'quantity-purchased' in merged_df.columns:
+            merged_df.rename(
+                columns={'quantity-purchased': 'QTY'}, 
+                inplace=True
+            )
+            
+        return merged_df
+        
+    except Exception as e:
+        messagebox.showerror("合并错误", f"合并Order/QTY失败:\n{str(e)}")
+        return None
 
 # ================================ 核心功能函数 ================================
+
 def generate_summary(raw_df, start_date, end_date):
     """生成交易类型汇总表（保持原样）"""
     try:
@@ -329,7 +364,7 @@ class AmazonProcessor(tk.Tk):
                  width=20).pack(pady=20)
 
     def process_data(self):
-        """Enhanced data processing logic"""
+        """Enhanced data processing logic with merging"""
         if not self.file_path.get() or not self.save_path.get():
             messagebox.showwarning("Input Error", "Please select source file and save path")
             return
@@ -343,7 +378,7 @@ class AmazonProcessor(tk.Tk):
             end_date = datetime.strptime(self.end_cal.get_date(), "%Y-%m-%d")
             
             with pd.ExcelWriter(self.save_path.get()) as writer:
-                # Generate summary tables
+                # [原有逻辑] Generate summary tables
                 pivot_tables = generate_summary(raw_df, start_date, end_date)
                 if pivot_tables:
                     start_row = 0
@@ -357,6 +392,9 @@ class AmazonProcessor(tk.Tk):
                         )
                         start_row += len(pivot) + 3
                 
+                # [新增逻辑] 初始化合并结果存储
+                all_merged = []
+                
                 # Monthly processing logic
                 if start_date.month != end_date.month or start_date.year != end_date.year:
                     monthly_data = split_data_by_month(raw_df, start_date, end_date)
@@ -364,16 +402,53 @@ class AmazonProcessor(tk.Tk):
                         month_start = month_df['posted-date'].min().to_pydatetime()
                         month_end = month_df['posted-date'].max().to_pydatetime()
                         
+                        # 处理QTY和Order数据
                         qty_df, _, _ = process_qty_data(month_df, month_start, month_end)
-                        qty_df.to_excel(writer, sheet_name=f"{month_key}_qty", index=False)
-                        
                         order_df = process_order_data(month_df)
+                        
+                        # 写入原有sheet
+                        qty_df.to_excel(writer, sheet_name=f"{month_key}_qty", index=False)
                         order_df.to_excel(writer, sheet_name=f"{month_key}_order", index=False)
+                        
+                        # [新增逻辑] 执行分月合并
+                        if qty_df is not None and order_df is not None:
+                            merged_month = merge_order_qty(order_df, qty_df)
+                            if merged_month is not None:
+                                merged_month.to_excel(
+                                    writer,
+                                    sheet_name=f"{month_key}_order_details",
+                                    index=False
+                                )
+                                all_merged.append(merged_month)
+                
                 else:
+                    # 处理非分月情况
                     qty_df, _, _ = process_qty_data(self.file_path.get(), start_date, end_date)
                     order_df = process_order_data(raw_df)
+                    
+                    # 写入原有sheet
                     qty_df.to_excel(writer, sheet_name='qty', index=False)
                     order_df.to_excel(writer, sheet_name='order', index=False)
+                    
+                    # [新增逻辑] 执行整体合并
+                    if qty_df is not None and order_df is not None:
+                        merged_all = merge_order_qty(order_df, qty_df)
+                        if merged_all is not None:
+                            merged_all.to_excel(
+                                writer,
+                                sheet_name='order_details',
+                                index=False
+                            )
+                            all_merged.append(merged_all)
+                
+                # [新增逻辑] 保存合并后的总表
+                #if all_merged:
+                #    full_merged = pd.concat(all_merged, ignore_index=True)
+                #    full_merged.to_excel(
+                #        writer,
+                #        sheet_name='Full Merged',
+                #        index=False
+                #    )
 
             messagebox.showinfo(
                 "Processing Complete",
