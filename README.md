@@ -13,6 +13,7 @@ The py file of this project has been packaged into exe, which can be used by any
 5. Summarize quantity and total amount based on SKU.
 
 </br>
+
 **Code used to package exe file.**
 
 ```
