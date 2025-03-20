@@ -14,6 +14,7 @@ The py file of this project has been packaged into exe, which can be used by any
 
 </br>
 **Code used to package exe file.**
+
 ```
 pyinstaller --noconfirm --onefile --windowed `
    --add-data "resources/icon;resources/icon" `
