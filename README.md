@@ -3,6 +3,8 @@
 
 The py file of this project has been packaged into exe, which can be used by anyone without any programming backgound.
 
+</br>
+
 **Functions:**
 1. Verify if the total amount is correct.
 2. Generate a pivot table by month for transaction-type, amount-type, and amount for subsequent expense calculations.
@@ -10,7 +12,7 @@ The py file of this project has been packaged into exe, which can be used by any
 4. Match with the SKU manual mapping Excel file on Google via API.
 5. Summarize quantity and total amount based on SKU.
 
-
+</br>
 **Code used to package exe file.**
 ```
 pyinstaller --noconfirm --onefile --windowed `
