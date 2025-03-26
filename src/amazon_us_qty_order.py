@@ -7,7 +7,8 @@ import numpy as np
 import os
 import sys
 import requests
-
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 
 
 
@@ -20,6 +21,38 @@ def get_resource_path(relative_path):
     full_path = os.path.join(base_path, relative_path)
     print(f"[Debug] 计算出的路径: {full_path}")  # 打印出路径
     return full_path
+
+def add_master_sku_from_gsheet(df):
+    """从Google Sheet获取SKU映射并添加master_sku列"""
+    try:
+        credentials_path = get_resource_path("resources/auth/credentials.json")
+        scope = ['https://spreadsheets.google.com/feeds',
+                 'https://www.googleapis.com/auth/drive']
+        
+        # 认证并获取数据
+        creds = ServiceAccountCredentials.from_json_keyfile_name(credentials_path, scope)
+        client = gspread.authorize(creds)
+        sheet = client.open("SKU Manual Mapping").sheet1
+        
+        # 创建SKU映射字典
+        records = sheet.get_all_records()
+        sku_mapping = {str(row['channel_sku']).strip(): str(row['sku_backup']).strip() 
+                      for row in records if row['channel_sku']}
+        
+        # 添加新列
+        df['master_sku'] = df['sku'].map(sku_mapping)
+        return df
+        
+    except Exception as e:
+        messagebox.showwarning("Google Sheet错误", 
+            f"SKU匹配失败:\n{str(e)}\n"
+            "请检查：\n"
+            "1. 凭证文件位置是否正确\n"
+            "2. 表格名称是否为'SKU Manual Mapping'\n"
+            "3. 表格权限是否开放")
+        return df
+
+
 
 # 获取图标路径
 icon_path = get_resource_path("resources/icon/app.ico")
@@ -97,7 +130,14 @@ def merge_order_qty(order_df, qty_df, raw_source_df=None):
         # 执行QTY填充
         if raw_source_df is not None:
             merged_df = fill_missing_qty(merged_df, raw_source_df)
-            
+
+        # 新增：添加master_sku列
+        merged_df = add_master_sku_from_gsheet(merged_df)
+        
+        # 调整列顺序
+        columns = ['master_sku'] + [col for col in merged_df.columns if col != 'master_sku']
+        return merged_df[columns]
+
         return merged_df
         
     except Exception as e:
