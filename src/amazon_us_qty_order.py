@@ -9,6 +9,9 @@ import sys
 import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.oauth2.credentials import Credentials
+import pickle
 
 
 # ================== Google Sheet集成部分 ==================
