@@ -11,6 +11,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request  # <--- 关键修复
 import pickle
 import webbrowser
 from dotenv import load_dotenv
@@ -36,13 +37,16 @@ def load_environment():
 load_environment()
 
 def get_google_creds():
-    """安全获取Google API凭据"""
+    """安全获取Google API凭据（优化存储路径版）"""
     SCOPES = [
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive.readonly'
     ]
-    creds = None
-    token_file = 'token.pickle'
+    
+    # 创建应用专属用户数据目录
+    app_data_dir = os.path.join(os.path.expanduser("~"), ".amazon-processor")
+    os.makedirs(app_data_dir, exist_ok=True)
+    token_file = os.path.join(app_data_dir, "token.pickle")
 
     try:
         # 验证环境变量
@@ -59,32 +63,47 @@ def get_google_creds():
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "redirect_uris": ["http://localhost:8080"],
-                "project_id": os.getenv('GOOGLE_PROJECT_ID', 'amazon-processor')  # 可选参数
+                "project_id": os.getenv('GOOGLE_PROJECT_ID', 'amazon-processor')
             }
         }
 
-        # 令牌管理逻辑
+        creds = None
+        # 尝试加载已有凭据
         if os.path.exists(token_file):
-            with open(token_file, 'rb') as token:
-                creds = pickle.load(token)
+            try:
+                with open(token_file, 'rb') as token:
+                    creds = pickle.load(token)
+            except (EOFError, pickle.UnpicklingError) as e:
+                print(f"[警告] 凭证文件损坏，将重新授权: {str(e)}")
+                os.remove(token_file)
 
+        # 凭据管理流程
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
+                try:
+                    creds.refresh(Request())
+                except Exception as refresh_error:
+                    print(f"[认证刷新失败] {str(refresh_error)}")
+                    creds = None
+
+            if not creds:
+                # 启动全新授权流程
                 flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
                 webbrowser.open(flow.authorization_url()[0])
                 creds = flow.run_local_server(port=8080)
-            
+
+            # 保存新凭据
             with open(token_file, 'wb') as token:
                 pickle.dump(creds, token)
+                print(f"[凭证存储] 已保存到: {token_file}")
 
         return creds
 
     except Exception as e:
         error_msg = f"认证失败: {str(e)}\n建议操作:\n"
-        error_msg += "1. 检查.env文件配置\n2. 确认已启用Google Sheets API\n3. 重新运行授权流程"
+        error_msg += "1. 检查网络连接\n2. 确认客户端ID/密钥正确\n3. 重新尝试授权"
         messagebox.showerror("认证错误", error_msg)
+        raise  # 向上传递异常以中断流程
 
 
 # ================== Google Sheet集成部分 ==================
@@ -503,6 +522,10 @@ class AmazonProcessor(tk.Tk):
                 f"icon_path: {icon_path}"
             )
 
+        # ====== 新增代码 ======
+        # 检查用户认证状态（首次运行检测）
+        self.check_auth_status()  # <--- 新增调用
+
         self.title("US Amazon Processor v3.1")
         self.geometry("550x470")
         self.configure(bg="#f0f0f0")
@@ -512,6 +535,40 @@ class AmazonProcessor(tk.Tk):
         self.true_max_date = datetime.now()
         self.create_widgets()
         
+        # ====== 新增方法 ======
+    def check_auth_status(self):
+        """首次运行时检查Google认证状态"""
+        token_path = os.path.join(
+            os.path.expanduser("~"), 
+            ".amazon-processor", 
+            "token.pickle"
+        )
+        
+        if not os.path.exists(token_path):
+            response = messagebox.askyesno(
+                "First-time Authorization",
+                "This application requires Google Account authorization to access Google Sheets.\nProceed now?",
+                icon='question'
+            )
+            if response:
+                try:
+                    # 触发授权流程
+                    get_google_creds()  
+                    messagebox.showinfo("Authorization Successful", "All features are now available!")
+                except Exception as e:
+                    messagebox.showerror(
+                        "Authorization Failed",
+                        f"Authorization could not be completed: {str(e)}\nPlease check your internet connection and try again."
+                    )
+                    self.destroy()  # 关闭应用
+            else:
+                messagebox.showwarning(
+                    "Authorization Required",
+                    "You must complete authorization to use core features.\nThe application will now exit."
+                )
+                self.destroy()
+
+
     def create_widgets(self):
         """Create UI components"""
         file_frame = tk.LabelFrame(
@@ -702,6 +759,8 @@ class AmazonProcessor(tk.Tk):
         )
         if path:
             self.save_path.set(path)
+    
+    
 
 if __name__ == "__main__":
     app = AmazonProcessor()
