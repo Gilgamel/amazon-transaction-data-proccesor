@@ -527,7 +527,7 @@ class AmazonProcessor(tk.Tk):
         self.check_auth_status()  # <--- 新增调用
 
         self.title("US Amazon Processor v3.1")
-        self.geometry("550x470")
+        self.geometry("600x470")
         self.configure(bg="#f0f0f0")
         self.file_path = tk.StringVar()
         self.save_path = tk.StringVar()
