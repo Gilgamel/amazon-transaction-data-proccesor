@@ -6,11 +6,11 @@ The py file of this project has been packaged into exe, which can be used by any
 </br>
 
 **Functions:**
-1. Verify if the total amount is correct.
-2. Generate a pivot table by month for transaction-type, amount-type, and amount for subsequent expense calculations.
-3. Generate order details by month.
-4. Match with the SKU manual mapping Excel file on Google via API.
-5. Summarize quantity and total amount based on SKU.
+1. Verify if the total amount is correct. 
+2. Generate a pivot table by month for transaction-type, amount-type, and amount for subsequent expense calculations. 
+3. Generate order details by month. 
+4. Match with the SKU manual mapping Excel file on Google via API. 
+5. Summarize quantity and total amount based on SKU. —— doing
 
 </br>
 
