@@ -23,3 +23,13 @@ pyinstaller --noconfirm --onefile --windowed `
    "src/amazon_us_qty_order.py"
 ```
 
+```
+pyinstaller --noconfirm --onefile --windowed `
+  --add-data "resources/icon;resources/icon" `
+  --add-data ".env;." `
+  --hidden-import "google.auth.transport.requests" `
+  --hidden-import "google_auth_oauthlib.flow" `
+  --icon "resources/icon/app.ico" `
+  --name "AmazonProcessor" `
+  "src/amazon_us_qty_order.py"
+```
