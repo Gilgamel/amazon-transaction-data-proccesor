@@ -31,7 +31,7 @@ pyinstaller --noconfirm --onefile --windowed `
 
 
 
-## Updates
+## Updates and Backup
 **Code used to package exe file.**
 
 ```
