@@ -1,1 +1,7 @@
 resources/auth/credentials.json
+
+# 添加以下内容
+.env
+token.pickle
+*.ico
+__pycache__/

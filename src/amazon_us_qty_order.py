@@ -12,6 +12,79 @@ from oauth2client.service_account import ServiceAccountCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
 import pickle
+import webbrowser
+from dotenv import load_dotenv
+
+
+
+# 加载环境变量（开发环境）
+def load_environment():
+    """安全加载环境配置"""
+    try:
+        # 优先从项目根目录加载.env文件
+        env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+        if os.path.exists(env_path):
+            load_dotenv(dotenv_path=env_path)
+        else:
+            # 打包后从可执行文件同级目录加载
+            load_dotenv(dotenv_path=os.path.join(sys._MEIPASS, '.env'))
+    except Exception as e:
+        print(f"[环境加载警告] {str(e)}")
+
+
+# 初始化环境配置
+load_environment()
+
+def get_google_creds():
+    """安全获取Google API凭据"""
+    SCOPES = [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive.readonly'
+    ]
+    creds = None
+    token_file = 'token.pickle'
+
+    try:
+        # 验证环境变量
+        required_envs = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET']
+        missing = [var for var in required_envs if not os.getenv(var)]
+        if missing:
+            raise ValueError(f"缺少环境变量: {', '.join(missing)}")
+
+        # 动态构建客户端配置
+        client_config = {
+            "installed": {
+                "client_id": os.getenv('GOOGLE_CLIENT_ID'),
+                "client_secret": os.getenv('GOOGLE_CLIENT_SECRET'),
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": ["http://localhost:8080"],
+                "project_id": os.getenv('GOOGLE_PROJECT_ID', 'amazon-processor')  # 可选参数
+            }
+        }
+
+        # 令牌管理逻辑
+        if os.path.exists(token_file):
+            with open(token_file, 'rb') as token:
+                creds = pickle.load(token)
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
+                webbrowser.open(flow.authorization_url()[0])
+                creds = flow.run_local_server(port=8080)
+            
+            with open(token_file, 'wb') as token:
+                pickle.dump(creds, token)
+
+        return creds
+
+    except Exception as e:
+        error_msg = f"认证失败: {str(e)}\n建议操作:\n"
+        error_msg += "1. 检查.env文件配置\n2. 确认已启用Google Sheets API\n3. 重新运行授权流程"
+        messagebox.showerror("认证错误", error_msg)
 
 
 # ================== Google Sheet集成部分 ==================
@@ -28,70 +101,77 @@ def get_resource_path(relative_path):
     return full_path
 
 def add_master_sku_from_gsheet(df):
-    """从Google Sheet获取SKU映射（增强版）"""
+    """从Google Sheet获取SKU映射（OAuth修正版）"""
     try:
         print("\n[Google Sheet] 开始加载SKU映射表")
         
-        # 认证配置
-        credentials_path = get_resource_path("resources/auth/credentials.json")
-        scope = [
-            'https://www.googleapis.com/auth/spreadsheets',
-            'https://www.googleapis.com/auth/drive',
-            'https://www.googleapis.com/auth/drive.metadata.readonly'
-        ]
-        
-        # 初始化服务
-        creds = ServiceAccountCredentials.from_json_keyfile_name(credentials_path, scope)
+        # 获取用户凭据
+        creds = get_google_creds()
         client = gspread.authorize(creds)
-        print(f"✓ 服务账号认证成功：{creds.service_account_email}")
         
-        # 打开表格并验证
+        # ==== 修改点1：移除服务账号相关提示 ====
         spreadsheet = client.open("SKU Manual Mapping")
         sheet = spreadsheet.sheet1
+        
+        # ==== 修改点2：增强列名验证 ====
         headers = sheet.row_values(1)
-        print(f"[Debug] 表格列标题：{headers}")
-        
-        # 验证必要列存在
         required_columns = ['channel_sku', 'sku_backup']
-        missing = [col for col in required_columns if col not in headers]
-        if missing:
-            raise ValueError(f"缺少必要列：{missing}")
         
-        # 构建SKU映射
-        sku_mapping = {}
+        # 严格检查列名（忽略大小写和空格）
+        header_clean = [h.strip().lower() for h in headers]
+        missing = [
+            col for col in required_columns 
+            if col not in header_clean
+        ]
+        
+        if missing:
+            # 生成友好的列名建议
+            suggestions = [
+                f"现有列：{headers}\n"
+                f"需要列：{required_columns}\n"
+                f"可能原因：\n"
+                f"- 列名拼写错误（检查大小写和空格）\n"
+                f"- 表格未使用标准模板"
+            ]
+            raise ValueError("\n".join(suggestions))
+        
+        # ==== 修改点3：优化数据加载 ====
         records = sheet.get_all_records()
+        sku_mapping = {}
+        
         for idx, row in enumerate(records, start=2):
+            # 统一处理空值和类型
             channel_sku = str(row.get('channel_sku', '')).strip()
             sku_backup = str(row.get('sku_backup', '')).strip()
             
             if not channel_sku:
-                print(f"[Warning] 第{idx}行channel_sku为空，已跳过")
+                print(f"[跳过] 第{idx}行：channel_sku为空")
                 continue
                 
+            # 重复检查
             if channel_sku in sku_mapping:
-                print(f"[Warning] 重复的channel_sku：{channel_sku}")
+                print(f"[警告] 重复channel_sku：{channel_sku} → 将覆盖前值")
                 
             sku_mapping[channel_sku] = sku_backup
         
-        print(f"✓ 成功加载 {len(sku_mapping)} 条SKU映射")
-        
-        # 添加列并验证
-        original_count = len(df)
+        print(f"成功加载 {len(sku_mapping)} 条映射")
         df['master_sku'] = df['sku'].map(sku_mapping)
-        matched_count = df['master_sku'].notna().sum()
-        print(f"✓ SKU匹配成功率：{matched_count}/{original_count} ({matched_count/original_count:.1%})")
         
+        return df
+
+    except gspread.exceptions.APIError as e:
+        # ==== 修改点4：精准识别权限问题 ====
+        error_msg = f"访问Google Sheet失败：{e.response.text}"
+        if "PERMISSION_DENIED" in str(e):
+            error_msg += "\n请确认：\n1. 已把表格分享给您的Google账号\n2. 表格ID正确"
+        messagebox.showerror("权限错误", error_msg)
         return df
         
     except Exception as e:
-        messagebox.showwarning("Google Sheet错误",
-            f"SKU匹配失败：{str(e)}\n"
-            "请检查：\n"
-            "1. 表格是否已分享给服务账号\n"
-            "2. 表格是否包含channel_sku和sku_backup列\n"
-            "3. 网络连接是否正常")
+        messagebox.showwarning("数据处理错误",
+            f"SKU匹配异常：{str(e)}\n"
+            "将继续使用原始SKU数据")
         return df
-
 
 # 获取图标路径
 icon_path = get_resource_path("resources/icon/app.ico")
