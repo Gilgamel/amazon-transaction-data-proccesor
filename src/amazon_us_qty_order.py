@@ -11,47 +11,83 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 
-
+# ================== Google Sheet集成部分 ==================
 def get_resource_path(relative_path):
-    """获取资源文件的路径，兼容开发模式和打包后的exe模式"""
+    """智能资源路径定位（修复开发模式路径）"""
     if getattr(sys, 'frozen', False):
-        base_path = sys._MEIPASS  # PyInstaller 解压后的临时目录
+        base_path = sys._MEIPASS
     else:
-        base_path = os.path.abspath(".")  # 当前脚本所在目录
+        # 确保开发模式路径正确：src目录 -> 父目录（项目根目录）
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
     full_path = os.path.join(base_path, relative_path)
-    print(f"[Debug] 计算出的路径: {full_path}")  # 打印出路径
+    print(f"[路径追踪] 资源解析：{full_path}")
     return full_path
 
 def add_master_sku_from_gsheet(df):
-    """从Google Sheet获取SKU映射并添加master_sku列"""
+    """从Google Sheet获取SKU映射（增强版）"""
     try:
-        credentials_path = get_resource_path("resources/auth/credentials.json")
-        scope = ['https://spreadsheets.google.com/feeds',
-                 'https://www.googleapis.com/auth/drive']
+        print("\n[Google Sheet] 开始加载SKU映射表")
         
-        # 认证并获取数据
+        # 认证配置
+        credentials_path = get_resource_path("resources/auth/credentials.json")
+        scope = [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive',
+            'https://www.googleapis.com/auth/drive.metadata.readonly'
+        ]
+        
+        # 初始化服务
         creds = ServiceAccountCredentials.from_json_keyfile_name(credentials_path, scope)
         client = gspread.authorize(creds)
-        sheet = client.open("SKU Manual Mapping").sheet1
+        print(f"✓ 服务账号认证成功：{creds.service_account_email}")
         
-        # 创建SKU映射字典
+        # 打开表格并验证
+        spreadsheet = client.open("SKU Manual Mapping")
+        sheet = spreadsheet.sheet1
+        headers = sheet.row_values(1)
+        print(f"[Debug] 表格列标题：{headers}")
+        
+        # 验证必要列存在
+        required_columns = ['channel_sku', 'sku_backup']
+        missing = [col for col in required_columns if col not in headers]
+        if missing:
+            raise ValueError(f"缺少必要列：{missing}")
+        
+        # 构建SKU映射
+        sku_mapping = {}
         records = sheet.get_all_records()
-        sku_mapping = {str(row['channel_sku']).strip(): str(row['sku_backup']).strip() 
-                      for row in records if row['channel_sku']}
+        for idx, row in enumerate(records, start=2):
+            channel_sku = str(row.get('channel_sku', '')).strip()
+            sku_backup = str(row.get('sku_backup', '')).strip()
+            
+            if not channel_sku:
+                print(f"[Warning] 第{idx}行channel_sku为空，已跳过")
+                continue
+                
+            if channel_sku in sku_mapping:
+                print(f"[Warning] 重复的channel_sku：{channel_sku}")
+                
+            sku_mapping[channel_sku] = sku_backup
         
-        # 添加新列
+        print(f"✓ 成功加载 {len(sku_mapping)} 条SKU映射")
+        
+        # 添加列并验证
+        original_count = len(df)
         df['master_sku'] = df['sku'].map(sku_mapping)
+        matched_count = df['master_sku'].notna().sum()
+        print(f"✓ SKU匹配成功率：{matched_count}/{original_count} ({matched_count/original_count:.1%})")
+        
         return df
         
     except Exception as e:
-        messagebox.showwarning("Google Sheet错误", 
-            f"SKU匹配失败:\n{str(e)}\n"
+        messagebox.showwarning("Google Sheet错误",
+            f"SKU匹配失败：{str(e)}\n"
             "请检查：\n"
-            "1. 凭证文件位置是否正确\n"
-            "2. 表格名称是否为'SKU Manual Mapping'\n"
-            "3. 表格权限是否开放")
+            "1. 表格是否已分享给服务账号\n"
+            "2. 表格是否包含channel_sku和sku_backup列\n"
+            "3. 网络连接是否正常")
         return df
-
 
 
 # 获取图标路径
@@ -101,47 +137,45 @@ def fill_missing_qty(merged_df, raw_source_df):
         messagebox.showwarning("QTY填充错误", f"填充缺失数量失败:\n{str(e)}")
         return merged_df
 
-# ================================ 合并逻辑 ================================
+# ================== 修改后的合并函数 ==================
 def merge_order_qty(order_df, qty_df, raw_source_df=None):
-    """合并 Order 和 QTY 数据（三键 LEFT JOIN）"""
+    """合并 Order 和 QTY 数据（新增master_sku列）"""
     try:
-        # 定义合并键
         merge_keys = ['order-id', 'shipment-id', 'sku']
         
-        # 检查必需列是否存在
+        # 数据验证
         for df, name in [(order_df, 'Order'), (qty_df, 'QTY')]:
             missing = [col for col in merge_keys if col not in df.columns]
             if missing:
                 raise ValueError(f"{name}表缺少关键列: {', '.join(missing)}")
         
-        # 执行 LEFT JOIN
+        # 合并数据
         merged_df = pd.merge(
             order_df,
             qty_df[merge_keys + ['quantity-purchased']],
             on=merge_keys,
-            how='left',
-            suffixes=('_order', '_qty')
+            how='left'
         )
         
-        # 重命名quantity列
+        # 列重命名
         if 'quantity-purchased' in merged_df.columns:
             merged_df.rename(columns={'quantity-purchased': 'QTY'}, inplace=True)
         
-        # 执行QTY填充
+        # 数量填充
         if raw_source_df is not None:
             merged_df = fill_missing_qty(merged_df, raw_source_df)
-
-        # 新增：添加master_sku列
+        
+        # 添加master_sku列
         merged_df = add_master_sku_from_gsheet(merged_df)
         
-        # 调整列顺序
-        columns = ['master_sku'] + [col for col in merged_df.columns if col != 'master_sku']
+        # 列顺序调整（确保master_sku在第一列）
+        columns = [col for col in merged_df.columns if col != 'master_sku'] + ['master_sku']
+        print(f"[Debug] 最终列顺序：{columns}")
+        
         return merged_df[columns]
-
-        return merged_df
         
     except Exception as e:
-        messagebox.showerror("合并错误", f"合并Order/QTY失败:\n{str(e)}")
+        messagebox.showerror("合并错误", f"数据处理失败：\n{str(e)}")
         return None
 
 # ================================ 核心功能函数 ================================
