@@ -14,14 +14,8 @@ The py file of this project has been packaged into exe, which can be used by any
 
 </br>
 
-**Code used to package exe file.**
 
-```
-pyinstaller --noconfirm --onefile --windowed `
-   --add-data "resources/icon;resources/icon" `
-   --icon "resources/icon/app.ico" `
-   "src/amazon_us_qty_order.py"
-```
+** code used to package exe file. with credential verify**
 
 ```
 pyinstaller --noconfirm --onefile --windowed `
@@ -32,4 +26,17 @@ pyinstaller --noconfirm --onefile --windowed `
   --icon "resources/icon/app.ico" `
   --name "AmazonProcessor" `
   "src/amazon_us_qty_order.py"
+```
+
+
+
+
+## Updates
+**Code used to package exe file.**
+
+```
+pyinstaller --noconfirm --onefile --windowed `
+   --add-data "resources/icon;resources/icon" `
+   --icon "resources/icon/app.ico" `
+   "src/amazon_us_qty_order.py"
 ```
