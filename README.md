@@ -15,6 +15,13 @@ The py file of this project has been packaged into exe, which can be used by any
 </br>
 
 
+**Install Requirements**
+
+```
+pip install -r requirements.txt
+```
+
+
 **code used to package exe file. with credential verify**
 
 ```
