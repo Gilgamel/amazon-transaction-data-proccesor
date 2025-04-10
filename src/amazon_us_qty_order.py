@@ -706,11 +706,35 @@ class AmazonProcessor(tk.Tk):
                                                 0.0  # QTY为0时设为0
                                             )
                                             
+                                            # ========== 新增代码：添加Shipping汇总行 ==========
+                                            try:
+                                                # 获取当月总运费（从order_details数据）
+                                                sum_total_shipping = merged_month['Total_shipping'].sum()
+        
+                                                if sum_total_shipping != 0:
+                                                    new_row = pd.DataFrame([{
+                                                        'master_sku': 'Shipping',
+                                                        'total QTY': 1,
+                                                        'total amount': sum_total_shipping,
+                                                        'product_rate': sum_total_shipping  # 因为QTY=1，直接等于amount
+                                                }])
+            
+                                                # 合并新行（确保列顺序一致）
+                                                grouped = pd.concat([grouped, new_row], ignore_index=True)
+            
+                                            except KeyError as e:
+                                                print(f"[Warning] {month_key}_order_details 缺少Total_shipping列: {str(e)}")
+                                            except Exception as e:
+                                                print(f"[Error] 添加Shipping行失败: {str(e)}")
+
+
                                         grouped.to_excel(
                                             writer,
                                             sheet_name=f"{month_key}_order_import",
                                             index=False
                                         )
+                    
+
                     
                                     else:
                                         print(f"[Warning] {month_key}_order_details 缺少必要列")
@@ -754,6 +778,31 @@ class AmazonProcessor(tk.Tk):
                                             grouped['product_rate'] = grouped['product_rate'].replace([np.inf, -np.inf], 0).fillna(0).round(2)
                                     except Exception as e:
                                         print(f"[Error] 计算product_rate失败: {str(e)}")
+
+                                    # ========== 新增代码开始 ========== （与try同级缩进）
+                                    try:
+                                        # 添加Shipping行逻辑    
+                                            # ========== 新增代码：添加Shipping汇总行 ==========
+                                            sum_total_shipping = merged_all['Total_shipping'].sum()
+        
+                                            if sum_total_shipping != 0:
+                                                new_row = pd.DataFrame([{
+                                                    'master_sku': 'Shipping',
+                                                    'total QTY': 1,
+                                                    'total amount': sum_total_shipping,
+                                                    'product_rate': sum_total_shipping
+                                                }])
+            
+                                                # 确保列顺序匹配
+                                                new_row = new_row[grouped.columns]
+                                                grouped = pd.concat([grouped, new_row], ignore_index=True)
+            
+                                    except KeyError as e:
+                                        print(f"[Warning] order_details 缺少Total_shipping列: {str(e)}")
+                                    except Exception as e:
+                                        print(f"[Error] 添加Shipping行失败: {str(e)}")
+
+
 
                                     grouped.to_excel(
                                         writer,
