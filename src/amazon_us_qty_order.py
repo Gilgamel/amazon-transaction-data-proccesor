@@ -774,26 +774,43 @@ class AmazonProcessor(tk.Tk):
                                                 0.0  # QTY为0时设为0
                                             )
                                             
+                                        # 计算product_cost（注意缩进层级）
+                                        grouped['product_cost'] = grouped['master_sku'].apply(
+                                            lambda sku: (  # 括号开始
+                                                0.0 
+                                                if str(sku).strip().lower() == "shipping"  # 条件判断
+                                                else landed_cost_data.get(  # 函数调用换行缩进
+                                                    str(sku).strip(),  # 参数1（4空格缩进）
+                                                    pdb_us_data.get(str(sku).strip(), 0.0)  # 参数2（与参数1对齐）
+                                                )  # get方法闭合
+                                            )  # lambda表达式闭合
+                                        )
+
+                                        # 计算total_cost（与上一代码块同级缩进）
+                                        grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
+
                                             # ========== 新增代码：添加Shipping汇总行 ==========
-                                            try:
-                                                # 获取当月总运费（从order_details数据）
-                                                sum_total_shipping = merged_month['Total_shipping'].sum()
+                                        try:
+                                               # 获取当月总运费（从order_details数据）
+                                            sum_total_shipping = merged_month['Total_shipping'].sum()
         
-                                                if sum_total_shipping != 0:
-                                                    new_row = pd.DataFrame([{
-                                                        'master_sku': 'Shipping',
-                                                        'total QTY': 1,
-                                                        'total amount': sum_total_shipping,
-                                                        'product_rate': sum_total_shipping  # 因为QTY=1，直接等于amount
-                                                }])
+                                            if sum_total_shipping != 0:
+                                                new_row = pd.DataFrame([{
+                                                    'master_sku': 'Shipping',
+                                                    'total QTY': 1,
+                                                    'total amount': sum_total_shipping,
+                                                    'product_rate': sum_total_shipping,
+                                                    'product_cost': 0,
+                                                    'total_cost': 0  # 因为QTY=1，直接等于amount
+                                            }])
             
-                                                # 合并新行（确保列顺序一致）
-                                                grouped = pd.concat([grouped, new_row], ignore_index=True)
+                                            # 合并新行（确保列顺序一致）
+                                            grouped = pd.concat([grouped, new_row], ignore_index=True)
             
-                                            except KeyError as e:
-                                                print(f"[Warning] {month_key}_order_details 缺少Total_shipping列: {str(e)}")
-                                            except Exception as e:
-                                                print(f"[Error] 添加Shipping行失败: {str(e)}")
+                                        except KeyError as e:
+                                            print(f"[Warning] {month_key}_order_details 缺少Total_shipping列: {str(e)}")
+                                        except Exception as e:
+                                            print(f"[Error] 添加Shipping行失败: {str(e)}")
 
                                         grouped.to_excel(
                                             writer,
@@ -837,7 +854,6 @@ class AmazonProcessor(tk.Tk):
                                         'Total_amount': 'total amount'
                                     })
 
-
                                     try:
                                         if 'total QTY' in grouped.columns and 'total amount' in grouped.columns:
                                             grouped['product_rate'] = grouped['total amount'] / grouped['total QTY']
@@ -845,6 +861,22 @@ class AmazonProcessor(tk.Tk):
                                             grouped['product_rate'] = grouped['product_rate'].replace([np.inf, -np.inf], 0).fillna(0).round(2)
                                     except Exception as e:
                                         print(f"[Error] 计算product_rate失败: {str(e)}")
+
+                                    # 计算product_cost（注意缩进层级）
+                                    grouped['product_cost'] = grouped['master_sku'].apply(
+                                        lambda sku: (  # 括号开始
+                                            0.0 
+                                            if str(sku).strip().lower() == "shipping"  # 条件判断
+                                            else landed_cost_data.get(  # 函数调用换行缩进
+                                                str(sku).strip(),  # 参数1（4空格缩进）
+                                                pdb_us_data.get(str(sku).strip(), 0.0)  # 参数2（与参数1对齐）
+                                            )  # get方法闭合
+                                        )  # lambda表达式闭合
+                                    )
+
+                                    # 计算total_cost（与上一代码块同级缩进）
+                                    grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
+                                    
 
                                     # ========== 新增代码开始 ========== （与try同级缩进）
                                     try:
@@ -868,6 +900,17 @@ class AmazonProcessor(tk.Tk):
                                         print(f"[Warning] order_details 缺少Total_shipping列: {str(e)}")
                                     except Exception as e:
                                         print(f"[Error] 添加Shipping行失败: {str(e)}")
+
+                                    # 列顺序调整（与 grouped 生成代码同级缩进）
+                                    final_columns = [
+                                        'master_sku', 
+                                        'total QTY', 
+                                        'total amount', 
+                                        'product_rate',
+                                        'product_cost', 
+                                        'total_cost'
+                                    ]
+                                    grouped = grouped[final_columns]
 
                                     grouped.to_excel(
                                         writer,
