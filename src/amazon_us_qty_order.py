@@ -850,7 +850,6 @@ class AmazonProcessor(tk.Tk):
             self.true_min_date = dates.min().to_pydatetime()
             self.true_max_date = dates.max().to_pydatetime()
         
-            # ========== 关键修改开始 ==========
             # 先配置日期范围限制
             self.start_cal.config(mindate=self.true_min_date, maxdate=self.true_max_date)
             self.end_cal.config(mindate=self.true_min_date, maxdate=self.true_max_date)
@@ -862,7 +861,7 @@ class AmazonProcessor(tk.Tk):
             # 强制刷新控件
             self.start_cal.update()
             self.end_cal.update()
-            # ========== 关键修改结束 ==========
+
         
         except Exception as e:
             messagebox.showerror("Error", f"File loading failed:\n{str(e)}")
