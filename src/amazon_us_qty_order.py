@@ -119,6 +119,58 @@ def get_resource_path(relative_path):
     print(f"[路径追踪] 资源解析：{full_path}")
     return full_path
 
+
+# ================== 新增函数：加载Google Sheet数据 ==================
+def load_gsheet_data(sheet_name):
+    """加载指定Google Sheet并返回SKU到cost的字典"""
+    try:
+        print(f"\n[Google Sheet] 开始加载 {sheet_name} 数据")
+        
+        # 复用现有认证流程
+        creds = get_google_creds()
+        client = gspread.authorize(creds)
+        
+        # 打开指定名称的工作表
+        spreadsheet = client.open(sheet_name)
+        sheet = spreadsheet.sheet1
+        
+        # 获取全部数据（包含标题）
+        rows = sheet.get_all_values()
+        if not rows:
+            print(f"[警告] {sheet_name} 表中无数据")
+            return {}
+        
+        # 验证列结构
+        if len(rows[0]) < 11:  # 确保至少有11列
+            raise ValueError(f"{sheet_name} 表结构错误：需要至少11列")
+        
+        # 构建SKU-Cost映射
+        cost_mapping = {}
+        for row in rows[1:]:  # 跳过标题行
+            sku = row[0].strip()  # A列
+            cost_str = row[10].strip()  # K列（第11列）
+            
+            if not sku:
+                continue
+                
+            try:
+                cost = float(cost_str) if cost_str else 0.0
+            except ValueError:
+                print(f"[警告] {sheet_name} 表中无效数值：SKU={sku}, 值='{cost_str}'")
+                cost = 0.0
+                
+            cost_mapping[sku] = cost
+        
+        print(f"成功加载 {len(cost_mapping)} 条 {sheet_name} 数据")
+        return cost_mapping
+        
+    except Exception as e:
+        error_msg = f"加载 {sheet_name} 失败：{str(e)}\n"
+        error_msg += "请检查：\n- 表格名称是否正确\n- 表格是否已分享给您的账号\n- 网络连接是否正常"
+        messagebox.showerror("Google Sheet错误", error_msg)
+        return {}
+
+
 def add_master_sku_from_gsheet(df):
     """从Google Sheet获取SKU映射（OAuth修正版）"""
     try:
@@ -636,6 +688,22 @@ class AmazonProcessor(tk.Tk):
             raw_source_df = pd.read_csv(self.file_path.get(), delimiter='\t').iloc[1:]
             raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], errors='coerce')
             
+
+            # ========== 新增代码：加载成本表 ==========
+            # 加载两个Google Sheet
+            print("\n[步骤1/4] 开始加载成本数据...")
+            landed_cost_data = load_gsheet_data("landed_cost")
+            pdb_us_data = load_gsheet_data("pdb_us")
+        
+            # 检查数据完整性
+            if not landed_cost_data or not pdb_us_data:
+                messagebox.showerror(
+                    "数据缺失", 
+                    "无法加载成本表，请检查控制台错误信息"
+                )
+                return
+            print("✅ 成本数据加载完成")
+
             # 保持原有处理流程
             raw_df = raw_source_df.copy()
             raw_df = raw_df.dropna(subset=['posted-date'])
@@ -727,7 +795,6 @@ class AmazonProcessor(tk.Tk):
                                             except Exception as e:
                                                 print(f"[Error] 添加Shipping行失败: {str(e)}")
 
-
                                         grouped.to_excel(
                                             writer,
                                             sheet_name=f"{month_key}_order_import",
@@ -801,8 +868,6 @@ class AmazonProcessor(tk.Tk):
                                         print(f"[Warning] order_details 缺少Total_shipping列: {str(e)}")
                                     except Exception as e:
                                         print(f"[Error] 添加Shipping行失败: {str(e)}")
-
-
 
                                     grouped.to_excel(
                                         writer,
