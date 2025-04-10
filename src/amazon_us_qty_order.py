@@ -833,7 +833,7 @@ class AmazonProcessor(tk.Tk):
         path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
         if not path: return
         self.file_path.set(path)
-        
+    
         try:
             total_amount = self.calculate_amount_sum(path)
             if total_amount and not messagebox.askyesno("Confirmation", 
@@ -842,19 +842,28 @@ class AmazonProcessor(tk.Tk):
 
             df = pd.read_csv(path, delimiter='\t', usecols=['posted-date'], dtype={'posted-date': 'string'})
             dates = pd.to_datetime(df['posted-date'], format='%Y-%m-%d', errors='coerce').dropna()
-            
+        
             if dates.empty:
                 messagebox.showwarning("Warning", "No valid date data found")
                 return
-                
+            
             self.true_min_date = dates.min().to_pydatetime()
             self.true_max_date = dates.max().to_pydatetime()
-            
-            self.start_cal.selection_set(self.true_min_date)
-            self.end_cal.selection_set(self.true_max_date)
+        
+            # ========== 关键修改开始 ==========
+            # 先配置日期范围限制
             self.start_cal.config(mindate=self.true_min_date, maxdate=self.true_max_date)
             self.end_cal.config(mindate=self.true_min_date, maxdate=self.true_max_date)
-            
+        
+            # 再设置选中日期
+            self.start_cal.selection_set(self.true_min_date)
+            self.end_cal.selection_set(self.true_max_date)
+        
+            # 强制刷新控件
+            self.start_cal.update()
+            self.end_cal.update()
+            # ========== 关键修改结束 ==========
+        
         except Exception as e:
             messagebox.showerror("Error", f"File loading failed:\n{str(e)}")
 
