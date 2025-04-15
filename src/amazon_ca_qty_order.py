@@ -633,9 +633,9 @@ class AmazonProcessor(tk.Tk):
             pady=5
         )
         file_frame.pack(pady=10, padx=15, fill="x")
-        tk.Label(file_frame, text="Input Path:", bg="#f0f0f0").grid(row=0, column=0)
+        tk.Label(file_frame, text="Input Path:", bg="#f0f0f0").grid(row=0, column=0, sticky='w')
         tk.Entry(file_frame, textvariable=self.file_path, width=55).grid(row=0, column=1)
-        tk.Button(file_frame, text="Browse", command=self.load_file, width=10).grid(row=0, column=2)
+        tk.Button(file_frame, text="Browse", command=self.load_file, width=10).grid(row=0, column=2, sticky='w')
         
         save_frame = tk.LabelFrame(
             self, 
@@ -646,9 +646,9 @@ class AmazonProcessor(tk.Tk):
             pady=5
         )
         save_frame.pack(pady=10, padx=15, fill="x")
-        tk.Label(save_frame, text="Output Path:", bg="#f0f0f0").grid(row=0, column=0)
+        tk.Label(save_frame, text="Output Path:", bg="#f0f0f0").grid(row=0, column=0, sticky='w')
         tk.Entry(save_frame, textvariable=self.save_path, width=55).grid(row=0, column=1)
-        tk.Button(save_frame, text="Browse", command=self.save_file, width=10).grid(row=0, column=2)
+        tk.Button(save_frame, text="Browse", command=self.save_file, width=10).grid(row=0, column=2, sticky='w')
         
         # Tax Report框架
         tax_frame = tk.LabelFrame(
@@ -662,7 +662,7 @@ class AmazonProcessor(tk.Tk):
         tax_frame.pack(pady=5, padx=15, fill="x")
         tk.Label(tax_frame, text="Tax Report Path:", bg="#f0f0f0").grid(row=0, column=0, sticky='w')
         tk.Entry(tax_frame, textvariable=self.tax_report_path, width=50).grid(row=0, column=1)
-        tk.Button(tax_frame, text="Browse", command=self.load_tax_report, width=10).grid(row=0, column=2)
+        tk.Button(tax_frame, text="Browse", command=self.load_tax_report, width=10).grid(row=0, column=2, sticky='w')
 
 
 
@@ -957,6 +957,9 @@ class AmazonProcessor(tk.Tk):
             messagebox.showerror("Error", f"Failed to calculate amount:\n{str(e)}")
             return None
 
+
+
+
 #### add Tax report 
     def load_tax_report(self):
         """加载税务报表文件（新增功能）"""
@@ -966,11 +969,11 @@ class AmazonProcessor(tk.Tk):
                 ("CSV Files", "*.csv")
                 #("All Files", "*.*")
             ],
-            title="选择税务报表文件"
+            title="Select Tax Report"
         )
         if path:
             self.tax_report_path.set(path)
-            print(f"[DEBUG] 已选择税务报表：{path}")
+            print(f"[DEBUG] Selected Tax Report：{path}")
 
 
     def load_file(self):
