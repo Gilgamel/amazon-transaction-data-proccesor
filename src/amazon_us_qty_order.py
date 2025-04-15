@@ -801,7 +801,8 @@ class AmazonProcessor(tk.Tk):
                                                     'total amount': sum_total_shipping,
                                                     'product_rate': sum_total_shipping,
                                                     'product_cost': 0,
-                                                    'total_cost': 0  # 因为QTY=1，直接等于amount
+                                                    'total_cost': 0
+
                                             }])
             
                                             # 合并新行（确保列顺序一致）
@@ -889,7 +890,9 @@ class AmazonProcessor(tk.Tk):
                                                     'master_sku': 'Shipping',
                                                     'total QTY': 1,
                                                     'total amount': sum_total_shipping,
-                                                    'product_rate': sum_total_shipping
+                                                    'product_rate': sum_total_shipping,
+                                                    'product_cost': 0,
+                                                    'total_cost': 0
                                                 }])
             
                                                 # 确保列顺序匹配
