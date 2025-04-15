@@ -781,7 +781,7 @@ class AmazonProcessor(tk.Tk):
                                                 if str(sku).strip().lower() == "shipping"  # 条件判断
                                                 else landed_cost_data.get(  # 函数调用换行缩进
                                                     str(sku).strip(),  # 参数1（4空格缩进）
-                                                    pdb_us_data.get(str(sku).strip(), 0.0)  # 参数2（与参数1对齐）
+                                                    pdb_us_data.get(str(sku).strip(), None)  # 参数2（与参数1对齐）
                                                 )  # get方法闭合
                                             )  # lambda表达式闭合
                                         )
@@ -870,7 +870,7 @@ class AmazonProcessor(tk.Tk):
                                             if str(sku).strip().lower() == "shipping"  # 条件判断
                                             else landed_cost_data.get(  # 函数调用换行缩进
                                                 str(sku).strip(),  # 参数1（4空格缩进）
-                                                pdb_us_data.get(str(sku).strip(), 0.0)  # 参数2（与参数1对齐）
+                                                pdb_us_data.get(str(sku).strip(), None)  # 参数2（与参数1对齐）
                                             )  # get方法闭合
                                         )  # lambda表达式闭合
                                     )
