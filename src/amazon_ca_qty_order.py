@@ -538,6 +538,101 @@ def process_order_data(raw_df):
         messagebox.showerror("处理错误", f"订单表处理失败:\n{str(e)}")
         return None
 
+def process_refund_data(raw_df):
+    """订单表处理（保持原样）"""
+    try:
+        df = raw_df.copy()
+        df = df[
+            (df['transaction-type'] == 'Refund') &
+            (df['amount-type'].isin(['ItemPrice', 'ItemWithheldTax', 'Promotion'])) &
+            (df['marketplace-name'] == 'Amazon.ca')
+        ]
+        
+        cols_to_drop = [
+            'settlement-id', 'settlement-start-date', 'settlement-end-date',
+            'deposit-date', 'total-amount', 'currency', 'transaction-type',
+            'merchant-order-id', 'adjustment-id', 'marketplace-name',
+            'fulfillment-id', 'posted-date', 'posted-date-time',
+            'order-item-code', 'merchant-order-item-id',
+            'merchant-adjustment-item-id', 'quantity-purchased', 'promotion-id'
+        ]
+        df = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
+        
+        df['des-type'] = df['amount-description'] + ":" + df['amount-type']
+        pivot_df = df.pivot_table(
+            index=['order-id', 'shipment-id', 'sku'],
+            columns='des-type',
+            values='amount',
+            aggfunc='sum',
+            fill_value=0
+        ).reset_index()
+
+        required_columns = [
+            "Principal:ItemPrice", "Principal:Promotion",
+            "Tax:ItemPrice", "MarketplaceFacilitatorTax-Principal:ItemWithheldTax",
+            "MarketplaceFacilitatorVAT-Principal:ItemWithheldTax",
+            "LowValueGoodsTax-Principal:ItemWithheldTax",
+            "Shipping:ItemPrice", "Shipping:Promotion",
+            "GiftWrap:ItemPrice", "GiftWrap:Promotion",
+            "GiftWrapTax:ItemPrice", "MarketplaceFacilitatorTax-Other:ItemWithheldTax"
+        ]
+
+        existing_columns = pivot_df.columns.tolist()
+        for col in required_columns:
+            if col not in existing_columns:
+                pivot_df[col] = 0
+
+        pivot_df['Product Amount'] = pivot_df['Principal:ItemPrice'] + pivot_df['Principal:Promotion']
+        pivot_df = pivot_df.drop(['Principal:ItemPrice', 'Principal:Promotion'], axis=1, errors='ignore')
+
+        product_tax_cols = [
+            'Tax:ItemPrice',
+            'MarketplaceFacilitatorTax-Principal:ItemWithheldTax',
+            'MarketplaceFacilitatorVAT-Principal:ItemWithheldTax',
+            'LowValueGoodsTax-Principal:ItemWithheldTax'
+        ]
+        pivot_df['Product Tax'] = pivot_df[product_tax_cols].sum(axis=1)
+        pivot_df = pivot_df.drop(product_tax_cols, axis=1, errors='ignore')
+
+        pivot_df['Shipping'] = pivot_df['Shipping:ItemPrice'] + pivot_df['Shipping:Promotion']
+        pivot_df = pivot_df.drop(['Shipping:ItemPrice', 'Shipping:Promotion'], axis=1, errors='ignore')
+
+        pivot_df['Giftwrap'] = pivot_df['GiftWrap:ItemPrice'] + pivot_df['GiftWrap:Promotion']
+        pivot_df = pivot_df.drop(['GiftWrap:ItemPrice', 'GiftWrap:Promotion'], axis=1, errors='ignore')
+
+        giftwrap_tax_cols = [
+            'GiftWrapTax:ItemPrice',
+            'MarketplaceFacilitatorTax-Other:ItemWithheldTax'
+        ]
+        pivot_df['Giftwrap Tax'] = pivot_df[giftwrap_tax_cols].sum(axis=1)
+        pivot_df = pivot_df.drop(giftwrap_tax_cols, axis=1, errors='ignore')
+
+        pivot_df['Total_amount'] = pivot_df[['Product Tax', 'Product Amount', 'Giftwrap', 'Giftwrap Tax']].sum(axis=1)
+        
+        if 'Shipping Tax' not in pivot_df.columns:
+            pivot_df['Shipping Tax'] = 0
+        pivot_df['Total_shipping'] = pivot_df['Shipping'] + pivot_df['Shipping Tax']
+
+        pivot_df['tax_rate'] = np.where(
+            pivot_df['Product Amount'] != 0,
+            (pivot_df['Product Tax'] / pivot_df['Product Amount']).round(2),
+            0
+        )
+        pivot_df['tax_rate'] = pivot_df['tax_rate'].apply(lambda x: f"{x:.0%}")
+
+        final_columns = [
+            'order-id', 'shipment-id', 'sku',
+            'Product Amount', 'Product Tax', 'tax_rate',
+            'Shipping', 'Shipping Tax', 'Total_shipping',
+            'Giftwrap', 'Giftwrap Tax', 'Total_amount'
+        ]
+        
+        return pivot_df[final_columns].sort_values("shipment-id")
+
+    except Exception as e:
+        messagebox.showerror("处理错误", f"退款表处理失败:\n{str(e)}")
+        return None
+
 # ================================ GUI界面类 ================================
 class AmazonProcessor(tk.Tk):
     def __init__(self):
