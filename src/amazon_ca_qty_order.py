@@ -544,7 +544,7 @@ def process_refund_data(raw_df):
         df = raw_df.copy()
         df = df[
             (df['transaction-type'] == 'Refund') &
-            (df['amount-type'].isin(['ItemPrice', 'ItemWithheldTax', 'Promotion'])) &
+            ## (df['amount-type'].isin(['ItemPrice', 'ItemWithheldTax', 'Promotion'])) &
             (df['marketplace-name'] == 'Amazon.ca')
         ]
         
