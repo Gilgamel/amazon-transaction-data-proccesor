@@ -16,8 +16,6 @@ import pickle
 import webbrowser
 from dotenv import load_dotenv
 
-
-
 # 加载环境变量（开发环境）
 def load_environment():
     """安全加载环境配置"""
@@ -31,7 +29,6 @@ def load_environment():
             load_dotenv(dotenv_path=os.path.join(sys._MEIPASS, '.env'))
     except Exception as e:
         print(f"[环境加载警告] {str(e)}")
-
 
 # 初始化环境配置
 load_environment()
@@ -105,7 +102,6 @@ def get_google_creds():
         messagebox.showerror("认证错误", error_msg)
         raise  # 向上传递异常以中断流程
 
-
 # ================== Google Sheet集成部分 ==================
 def get_resource_path(relative_path):
     """智能资源路径定位（修复开发模式路径）"""
@@ -118,7 +114,6 @@ def get_resource_path(relative_path):
     full_path = os.path.join(base_path, relative_path)
     print(f"[路径追踪] 资源解析：{full_path}")
     return full_path
-
 
 # ================== 新增函数：加载Google Sheet数据 ==================
 def load_gsheet_data(sheet_name):
@@ -169,7 +164,6 @@ def load_gsheet_data(sheet_name):
         error_msg += "请检查：\n- 表格名称是否正确\n- 表格是否已分享给您的账号\n- 网络连接是否正常"
         messagebox.showerror("Google Sheet错误", error_msg)
         return {}
-
 
 def add_master_sku_from_gsheet(df):
     """从Google Sheet获取SKU映射（OAuth修正版）"""
@@ -633,6 +627,55 @@ def process_refund_data(raw_df):
         messagebox.showerror("处理错误", f"退款表处理失败:\n{str(e)}")
         return None
 
+# ================================ 新增函数：计算税务代码 ================================
+def calculate_tax_code(tax_rate, jurisdiction_name, order_id, tax_report_mapping):
+    """根据税率和地区计算税务代码"""
+    # 如果税率为0%，则返回OUT OF SCOPE
+    if tax_rate == '0%':
+        return 'OUT OF SCOPE'
+    
+    # 如果jurisdiction_name已提供，直接使用
+    if jurisdiction_name:
+        jurisdiction_upper = jurisdiction_name.upper()
+        # 映射地区到税务代码
+        if jurisdiction_upper in ['MANITOBA', 'SASKATCHEWAN', 'ALBERTA', 'QUEBEC', 
+                                 'BRITISH COLUMBIA', 'NUNAVUT', 'NORTHWEST TERRITORIES', 
+                                 'YUKON TERRITORY']:
+            return 'GST'
+        elif jurisdiction_upper == 'NEW BRUNSWICK':
+            return 'HST NB 2016'
+        elif jurisdiction_upper == 'ONTARIO':
+            return 'HST ON'
+        elif jurisdiction_upper == 'NOVA SCOTIA':
+            return 'HST NS 2025'
+        elif jurisdiction_upper == 'PRINCE EDWARD ISLAND':
+            return 'HST PEI'
+        elif jurisdiction_upper == 'NEWFOUNDLAND AND LABRADOR':
+            return 'HST NL 2016'
+    
+    # 如果jurisdiction_name未提供但tax_report_mapping存在，尝试查找
+    if tax_report_mapping:
+        jurisdiction = tax_report_mapping.get(order_id)
+        if jurisdiction:
+            jurisdiction_upper = jurisdiction.upper()
+            if jurisdiction_upper in ['MANITOBA', 'SASKATCHEWAN', 'ALBERTA', 'QUEBEC', 
+                                     'BRITISH COLUMBIA', 'NUNAVUT', 'NORTHWEST TERRITORIES', 
+                                     'YUKON TERRITORY']:
+                return 'GST'
+            elif jurisdiction_upper == 'NEW BRUNSWICK':
+                return 'HST NB 2016'
+            elif jurisdiction_upper == 'ONTARIO':
+                return 'HST ON'
+            elif jurisdiction_upper == 'NOVA SCOTIA':
+                return 'HST NS 2025'
+            elif jurisdiction_upper == 'PRINCE EDWARD ISLAND':
+                return 'HST PEI'
+            elif jurisdiction_upper == 'NEWFOUNDLAND AND LABRADOR':
+                return 'HST NL 2016'
+    
+    # 如果都无法确定，返回空字符串
+    return ''
+
 # ================================ GUI界面类 ================================
 class AmazonProcessor(tk.Tk):
     def __init__(self):
@@ -681,6 +724,7 @@ class AmazonProcessor(tk.Tk):
         self.tax_report_path = tk.StringVar()
         self.true_min_date = datetime(2020,1,1)
         self.true_max_date = datetime.now()
+        self.tax_report_mapping = {}  # 新增：存储order-id到Jurisdiction_Name的映射
         self.create_widgets()
         
         # ====== 新增方法 ======
@@ -715,7 +759,6 @@ class AmazonProcessor(tk.Tk):
                     "You must complete authorization to use core features.\nThe application will now exit."
                 )
                 self.destroy()
-
 
     def create_widgets(self):
         """Create UI components"""
@@ -759,8 +802,6 @@ class AmazonProcessor(tk.Tk):
         tk.Entry(tax_frame, textvariable=self.tax_report_path, width=50).grid(row=0, column=1)
         tk.Button(tax_frame, text="Browse", command=self.load_tax_report, width=10).grid(row=0, column=2, sticky='w')
 
-
-
         date_frame = tk.LabelFrame(
             self, 
             text="Date Range",
@@ -796,14 +837,51 @@ class AmazonProcessor(tk.Tk):
             return
         
         try:
+            # ========== 第一步：处理Tax Report ==========
+            state_tax_data = None
+            if self.tax_report_path.get():
+                try:
+                    # 读取tax report文件
+                    tax_report_df = pd.read_csv(self.tax_report_path.get())
+                    print(f"[Tax Report] 成功加载文件，共 {len(tax_report_df)} 行")
+                    
+                    # 标准化列名（去除空格和特殊字符）
+                    tax_report_df.columns = [col.strip().replace(' ', '_') for col in tax_report_df.columns]
+                    
+                    # 检查必要的列是否存在
+                    if 'Jurisdiction_Level' not in tax_report_df.columns:
+                        raise ValueError("Tax Report文件中缺少 'Jurisdiction_Level' 列")
+                    
+                    # 筛选Jurisdiction_Level为'State'的数据
+                    state_tax_data = tax_report_df[tax_report_df['Jurisdiction_Level'] == 'State']
+                    print(f"[Tax Report] 筛选出 {len(state_tax_data)} 条State级别的记录")
+                    
+                    # 创建order-id到Jurisdiction_Name的映射
+                    self.tax_report_mapping = {}
+                    for _, row in state_tax_data.iterrows():
+                        order_id = str(row.get('order-id', '')).strip()
+                        jurisdiction = str(row.get('Jurisdiction_Name', '')).strip()
+                        if order_id and jurisdiction:
+                            self.tax_report_mapping[order_id] = jurisdiction
+                    print(f"[Tax Report] 创建了 {len(self.tax_report_mapping)} 条order-id到Jurisdiction_Name的映射")
+                    
+                    # 如果筛选结果为空，显示警告
+                    if state_tax_data.empty:
+                        messagebox.showwarning("警告", "Tax Report筛选结果为空，请检查数据")
+                    
+                except Exception as e:
+                    messagebox.showerror("Tax Report错误", f"处理Tax Report失败: {str(e)}")
+                    state_tax_data = None
+            else:
+                print("[Tax Report] 未提供税务报表路径，跳过处理")
+                self.tax_report_mapping = {}
+
             # 读取原始数据副本用于QTY填充
             raw_source_df = pd.read_csv(self.file_path.get(), delimiter='\t').iloc[1:]
             raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], errors='coerce')
             
-
-            # ========== 新增代码：加载成本表 ==========
-            # 加载两个Google Sheet
-            print("\n[步骤1/4] 开始加载成本数据...")
+            # ========== 第二步：加载成本表 ==========
+            print("\n[步骤2/4] 开始加载成本数据...")
             landed_cost_data = load_gsheet_data("landed_cost")
             pdb_us_data = load_gsheet_data("pdb_us")
         
@@ -824,7 +902,7 @@ class AmazonProcessor(tk.Tk):
             end_date = datetime.strptime(self.end_cal.get_date(), "%Y-%m-%d")
             
             with pd.ExcelWriter(self.save_path.get()) as writer:
-                # Generate summary tables
+                # 1. 写入Summary表
                 pivot_tables = generate_summary(raw_df, start_date, end_date)
                 if pivot_tables:
                     start_row = 0
@@ -838,10 +916,23 @@ class AmazonProcessor(tk.Tk):
                         )
                         start_row += len(pivot) + 3
                 
-                # 初始化合并结果存储
+                # 2. 写入Tax Report筛选结果（如果存在）
+                if state_tax_data is not None and not state_tax_data.empty:
+                    try:
+                        # 写入筛选后的Tax Report数据
+                        state_tax_data.to_excel(
+                            writer, 
+                            sheet_name='tax report filter',
+                            index=False
+                        )
+                        print("✅ Tax Report筛选结果已写入")
+                    except Exception as e:
+                        messagebox.showerror("写入错误", f"写入Tax Report筛选结果失败: {str(e)}")
+                
+                # 3. 初始化合并结果存储
                 all_merged = []
                 
-                # Monthly processing logic
+                # 4. Monthly processing logic
                 if start_date.month != end_date.month or start_date.year != end_date.year:
                     monthly_data = split_data_by_month(raw_df, start_date, end_date)
                     for month_key, month_df in monthly_data.items():
@@ -853,13 +944,28 @@ class AmazonProcessor(tk.Tk):
                         order_df = process_order_data(month_df)
                         
                         # 写入原有sheet
-                        qty_df.to_excel(writer, sheet_name=f"{month_key}_qty", index=False)
-                        order_df.to_excel(writer, sheet_name=f"{month_key}_order", index=False)
+                        if qty_df is not None:
+                            qty_df.to_excel(writer, sheet_name=f"{month_key}_qty", index=False)
+                        if order_df is not None:
+                            order_df.to_excel(writer, sheet_name=f"{month_key}_order", index=False)
                         
                         # 执行分月合并
                         if qty_df is not None and order_df is not None:
                             merged_month = merge_order_qty(order_df, qty_df, raw_source_df)
                             if merged_month is not None:
+                                # ====== 新增：添加tax code列 ======
+                                merged_month['tax_code'] = merged_month.apply(
+                                    lambda row: calculate_tax_code(
+                                        row['tax_rate'],
+                                        '',  # 这里留空，因为我们需要通过order-id查找
+                                        str(row['order-id']),
+                                        self.tax_report_mapping
+                                    ),
+                                    axis=1
+                                )
+                                print(f"[税务代码] 为 {len(merged_month)} 条记录添加了tax_code列")
+                                
+                                # 写入订单详情表
                                 merged_month.to_excel(
                                     writer,
                                     sheet_name=f"{month_key}_order_details",
@@ -942,13 +1048,27 @@ class AmazonProcessor(tk.Tk):
                     order_df = process_order_data(raw_df)
                     
                     # 写入原有sheet
-                    qty_df.to_excel(writer, sheet_name='qty', index=False)
-                    order_df.to_excel(writer, sheet_name='order', index=False)
+                    if qty_df is not None:
+                        qty_df.to_excel(writer, sheet_name='qty', index=False)
+                    if order_df is not None:
+                        order_df.to_excel(writer, sheet_name='order', index=False)
                     
                     # 执行整体合并
                     if qty_df is not None and order_df is not None:
                         merged_all = merge_order_qty(order_df, qty_df, raw_source_df)
                         if merged_all is not None:
+                            # ====== 新增：添加tax code列 ======
+                            merged_all['tax_code'] = merged_all.apply(
+                                lambda row: calculate_tax_code(
+                                    row['tax_rate'],
+                                    '',  # 这里留空，因为我们需要通过order-id查找
+                                    str(row['order-id']),
+                                    self.tax_report_mapping
+                                ),
+                                axis=1
+                            )
+                            print(f"[税务代码] 为 {len(merged_all)} 条记录添加了tax_code列")
+                            
                             merged_all.to_excel(
                                 writer,
                                 sheet_name='order_details',
@@ -1052,10 +1172,6 @@ class AmazonProcessor(tk.Tk):
             messagebox.showerror("Error", f"Failed to calculate amount:\n{str(e)}")
             return None
 
-
-
-
-#### add Tax report 
     def load_tax_report(self):
         """加载税务报表文件（新增功能）"""
         path = filedialog.askopenfilename(
@@ -1069,7 +1185,6 @@ class AmazonProcessor(tk.Tk):
         if path:
             self.tax_report_path.set(path)
             print(f"[DEBUG] Selected Tax Report：{path}")
-
 
     def load_file(self):
         path = filedialog.askopenfilename(filetypes=[("Text Files", "*.txt")])
