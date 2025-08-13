@@ -627,55 +627,6 @@ def process_refund_data(raw_df):
         messagebox.showerror("处理错误", f"退款表处理失败:\n{str(e)}")
         return None
 
-# ================================ 新增函数：计算税务代码 ================================
-def calculate_tax_code(tax_rate, jurisdiction_name, order_id, tax_report_mapping):
-    """根据税率和地区计算税务代码"""
-    # 如果税率为0%，则返回OUT OF SCOPE
-    if tax_rate == '0%':
-        return 'OUT OF SCOPE'
-    
-    # 如果jurisdiction_name已提供，直接使用
-    if jurisdiction_name:
-        jurisdiction_upper = jurisdiction_name.upper()
-        # 映射地区到税务代码
-        if jurisdiction_upper in ['MANITOBA', 'SASKATCHEWAN', 'ALBERTA', 'QUEBEC', 
-                                 'BRITISH COLUMBIA', 'NUNAVUT', 'NORTHWEST TERRITORIES', 
-                                 'YUKON TERRITORY']:
-            return 'GST'
-        elif jurisdiction_upper == 'NEW BRUNSWICK':
-            return 'HST NB 2016'
-        elif jurisdiction_upper == 'ONTARIO':
-            return 'HST ON'
-        elif jurisdiction_upper == 'NOVA SCOTIA':
-            return 'HST NS 2025'
-        elif jurisdiction_upper == 'PRINCE EDWARD ISLAND':
-            return 'HST PEI'
-        elif jurisdiction_upper == 'NEWFOUNDLAND AND LABRADOR':
-            return 'HST NL 2016'
-    
-    # 如果jurisdiction_name未提供但tax_report_mapping存在，尝试查找
-    if tax_report_mapping:
-        jurisdiction = tax_report_mapping.get(order_id)
-        if jurisdiction:
-            jurisdiction_upper = jurisdiction.upper()
-            if jurisdiction_upper in ['MANITOBA', 'SASKATCHEWAN', 'ALBERTA', 'QUEBEC', 
-                                     'BRITISH COLUMBIA', 'NUNAVUT', 'NORTHWEST TERRITORIES', 
-                                     'YUKON TERRITORY']:
-                return 'GST'
-            elif jurisdiction_upper == 'NEW BRUNSWICK':
-                return 'HST NB 2016'
-            elif jurisdiction_upper == 'ONTARIO':
-                return 'HST ON'
-            elif jurisdiction_upper == 'NOVA SCOTIA':
-                return 'HST NS 2025'
-            elif jurisdiction_upper == 'PRINCE EDWARD ISLAND':
-                return 'HST PEI'
-            elif jurisdiction_upper == 'NEWFOUNDLAND AND LABRADOR':
-                return 'HST NL 2016'
-    
-    # 如果都无法确定，返回空字符串
-    return ''
-
 # ================================ GUI界面类 ================================
 class AmazonProcessor(tk.Tk):
     def __init__(self):
@@ -724,7 +675,7 @@ class AmazonProcessor(tk.Tk):
         self.tax_report_path = tk.StringVar()
         self.true_min_date = datetime(2020,1,1)
         self.true_max_date = datetime.now()
-        self.tax_report_mapping = {}  # 新增：存储order-id到Jurisdiction_Name的映射
+        self.tax_report_mapping = {}  # 存储order-id到Jurisdiction_Name的映射
         self.create_widgets()
         
         # ====== 新增方法 ======
@@ -839,6 +790,8 @@ class AmazonProcessor(tk.Tk):
         try:
             # ========== 第一步：处理Tax Report ==========
             state_tax_data = None
+            tax_report_mapping = {}  # 初始化税务位置映射
+            
             if self.tax_report_path.get():
                 try:
                     # 读取tax report文件
@@ -849,21 +802,21 @@ class AmazonProcessor(tk.Tk):
                     tax_report_df.columns = [col.strip().replace(' ', '_') for col in tax_report_df.columns]
                     
                     # 检查必要的列是否存在
-                    if 'Jurisdiction_Level' not in tax_report_df.columns:
-                        raise ValueError("Tax Report文件中缺少 'Jurisdiction_Level' 列")
+                    if 'Jurisdiction_Level' not in tax_report_df.columns or 'Jurisdiction_Name' not in tax_report_df.columns:
+                        raise ValueError("Tax Report文件中缺少 'Jurisdiction_Level' 或 'Jurisdiction_Name' 列")
                     
                     # 筛选Jurisdiction_Level为'State'的数据
                     state_tax_data = tax_report_df[tax_report_df['Jurisdiction_Level'] == 'State']
                     print(f"[Tax Report] 筛选出 {len(state_tax_data)} 条State级别的记录")
                     
                     # 创建order-id到Jurisdiction_Name的映射
-                    self.tax_report_mapping = {}
+                    tax_report_mapping = {}
                     for _, row in state_tax_data.iterrows():
-                        order_id = str(row.get('order-id', '')).strip()
+                        order_id = str(row.get('Order_ID', '')).strip()
                         jurisdiction = str(row.get('Jurisdiction_Name', '')).strip()
                         if order_id and jurisdiction:
-                            self.tax_report_mapping[order_id] = jurisdiction
-                    print(f"[Tax Report] 创建了 {len(self.tax_report_mapping)} 条order-id到Jurisdiction_Name的映射")
+                            tax_report_mapping[order_id] = jurisdiction
+                    print(f"[Tax Report] 创建了 {len(tax_report_mapping)} 条order-id到Jurisdiction_Name的映射")
                     
                     # 如果筛选结果为空，显示警告
                     if state_tax_data.empty:
@@ -874,7 +827,6 @@ class AmazonProcessor(tk.Tk):
                     state_tax_data = None
             else:
                 print("[Tax Report] 未提供税务报表路径，跳过处理")
-                self.tax_report_mapping = {}
 
             # 读取原始数据副本用于QTY填充
             raw_source_df = pd.read_csv(self.file_path.get(), delimiter='\t').iloc[1:]
@@ -953,17 +905,13 @@ class AmazonProcessor(tk.Tk):
                         if qty_df is not None and order_df is not None:
                             merged_month = merge_order_qty(order_df, qty_df, raw_source_df)
                             if merged_month is not None:
-                                # ====== 新增：添加tax code列 ======
-                                merged_month['tax_code'] = merged_month.apply(
-                                    lambda row: calculate_tax_code(
-                                        row['tax_rate'],
-                                        '',  # 这里留空，因为我们需要通过order-id查找
-                                        str(row['order-id']),
-                                        self.tax_report_mapping
-                                    ),
-                                    axis=1
-                                )
-                                print(f"[税务代码] 为 {len(merged_month)} 条记录添加了tax_code列")
+                                # ====== 新增：添加tax_location列 ======
+                                if tax_report_mapping:
+                                    merged_month['tax_location'] = merged_month['order-id'].map(tax_report_mapping).fillna('')
+                                    print(f"[税务位置] 为 {len(merged_month)} 条记录添加了tax_location列")
+                                else:
+                                    merged_month['tax_location'] = ''
+                                    print("[税务位置] 无税务报表数据，tax_location列为空")
                                 
                                 # 写入订单详情表
                                 merged_month.to_excel(
@@ -1057,17 +1005,13 @@ class AmazonProcessor(tk.Tk):
                     if qty_df is not None and order_df is not None:
                         merged_all = merge_order_qty(order_df, qty_df, raw_source_df)
                         if merged_all is not None:
-                            # ====== 新增：添加tax code列 ======
-                            merged_all['tax_code'] = merged_all.apply(
-                                lambda row: calculate_tax_code(
-                                    row['tax_rate'],
-                                    '',  # 这里留空，因为我们需要通过order-id查找
-                                    str(row['order-id']),
-                                    self.tax_report_mapping
-                                ),
-                                axis=1
-                            )
-                            print(f"[税务代码] 为 {len(merged_all)} 条记录添加了tax_code列")
+                            # ====== 新增：添加tax_location列 ======
+                            if tax_report_mapping:
+                                merged_all['tax_location'] = merged_all['order-id'].map(tax_report_mapping).fillna('')
+                                print(f"[税务位置] 为 {len(merged_all)} 条记录添加了tax_location列")
+                            else:
+                                merged_all['tax_location'] = ''
+                                print("[税务位置] 无税务报表数据，tax_location列为空")
                             
                             merged_all.to_excel(
                                 writer,
