@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['src\\amazon_us_qty_order.py'],
+    ['src\\amazon_ca_qty_order.py'],
     pathex=[],
     binaries=[],
     datas=[('resources/icon', 'resources/icon'), ('.env', '.')],
