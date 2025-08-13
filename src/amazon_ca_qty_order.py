@@ -11,7 +11,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request  # <--- 关键修复
+from google.auth.transport.requests import Request
 import pickle
 import webbrowser
 from dotenv import load_dotenv
@@ -437,13 +437,14 @@ def process_qty_data(input_data, start_date, end_date):
         messagebox.showerror("处理错误", f"数量表处理失败:\n{str(e)}")
         return None, None, None
 
+# ================== 修复后的订单处理函数 ==================
 def process_order_data(raw_df):
-    """订单表处理（保持原样）"""
+    """订单表处理（修复Shipping Tax问题）"""
     try:
         df = raw_df.copy()
         df = df[
             (df['transaction-type'] == 'Order') &
-            (df['amount-type'].isin(['ItemPrice', 'ItemWithheldTax', 'Promotion'])) &
+            (df['amount-type'].isin(['ItemPrice', 'ItemWithheldTax', 'Promotion', 'Tax'])) &
             (df['marketplace-name'] == 'Amazon.ca')
         ]
         
@@ -458,6 +459,11 @@ def process_order_data(raw_df):
         df = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
         
         df['des-type'] = df['amount-description'] + ":" + df['amount-type']
+        
+        # 修复1: 添加Shipping Tax的des-type
+        df.loc[(df['amount-description'] == 'ShippingTax') & (df['amount-type'] == 'ItemPrice'), 'des-type'] = "Shipping:Tax"
+        
+        
         pivot_df = df.pivot_table(
             index=['order-id', 'shipment-id', 'sku'],
             columns='des-type',
@@ -472,13 +478,14 @@ def process_order_data(raw_df):
             "MarketplaceFacilitatorVAT-Principal:ItemWithheldTax",
             "LowValueGoodsTax-Principal:ItemWithheldTax",
             "Shipping:ItemPrice", "Shipping:Promotion",
+            "Shipping:Tax",  # 修复2: 添加Shipping:Tax列
             "GiftWrap:ItemPrice", "GiftWrap:Promotion",
-            "GiftWrapTax:ItemPrice", "MarketplaceFacilitatorTax-Other:ItemWithheldTax"
+            "GiftWrapTax:ItemPrice", "MarketplaceFacilitatorTax-Other:ItemWithheldTax","MarketplaceFacilitatorTax-Shipping:ItemWithheldTax"
         ]
 
-        existing_columns = pivot_df.columns.tolist()
+        # 确保所有需要的列都存在
         for col in required_columns:
-            if col not in existing_columns:
+            if col not in pivot_df.columns:
                 pivot_df[col] = 0
 
         pivot_df['Product Amount'] = pivot_df['Principal:ItemPrice'] + pivot_df['Principal:Promotion']
@@ -495,6 +502,11 @@ def process_order_data(raw_df):
 
         pivot_df['Shipping'] = pivot_df['Shipping:ItemPrice'] + pivot_df['Shipping:Promotion']
         pivot_df = pivot_df.drop(['Shipping:ItemPrice', 'Shipping:Promotion'], axis=1, errors='ignore')
+        
+        # 修复3: 正确提取Shipping Tax值
+        
+        pivot_df['Shipping Tax'] = pivot_df['Shipping:Tax'] + pivot_df['MarketplaceFacilitatorTax-Shipping:ItemWithheldTax']
+        pivot_df = pivot_df.drop(['Shipping:Tax'], axis=1, errors='ignore')
 
         pivot_df['Giftwrap'] = pivot_df['GiftWrap:ItemPrice'] + pivot_df['GiftWrap:Promotion']
         pivot_df = pivot_df.drop(['GiftWrap:ItemPrice', 'GiftWrap:Promotion'], axis=1, errors='ignore')
@@ -508,8 +520,10 @@ def process_order_data(raw_df):
 
         pivot_df['Total_amount'] = pivot_df[['Product Tax', 'Product Amount', 'Giftwrap', 'Giftwrap Tax']].sum(axis=1)
         
+        # 确保Shipping Tax列存在
         if 'Shipping Tax' not in pivot_df.columns:
             pivot_df['Shipping Tax'] = 0
+            
         pivot_df['Total_shipping'] = pivot_df['Shipping'] + pivot_df['Shipping Tax']
 
         pivot_df['tax_rate'] = np.where(
@@ -533,12 +547,11 @@ def process_order_data(raw_df):
         return None
 
 def process_refund_data(raw_df):
-    """订单表处理（保持原样）"""
+    """退款表处理（保持原样）"""
     try:
         df = raw_df.copy()
         df = df[
             (df['transaction-type'] == 'Refund') &
-            ## (df['amount-type'].isin(['ItemPrice', 'ItemWithheldTax', 'Promotion'])) &
             (df['marketplace-name'] == 'Amazon.ca')
         ]
         
@@ -652,6 +665,75 @@ def calculate_tax_code(tax_location):
     else:
         return ''
 
+# ================== 新增函数：生成按税码分组的订单导入表 ==================
+def generate_order_import_sheet(merged_df, landed_cost_data, pdb_us_data):
+    """生成按master_sku和tax_code分组的订单导入表"""
+    try:
+        # 1. 按master_sku和tax_code分组
+        grouped = merged_df.groupby(['master_sku', 'tax_code'], as_index=False).agg({
+            'QTY': 'sum',
+            'Total_amount': 'sum'
+        }).rename(columns={
+            'QTY': 'total QTY',
+            'Total_amount': 'total amount'
+        })
+
+        # 2. 计算产品单价
+        grouped['product_rate'] = np.where(
+            grouped['total QTY'] > 0,
+            (grouped['total amount'] / grouped['total QTY']).round(2),
+            0.0
+        )
+
+        # 3. 计算产品成本
+        grouped['product_cost'] = grouped['master_sku'].apply(
+            lambda sku: 0.0 if str(sku).strip().lower() == "shipping" 
+                        else landed_cost_data.get(str(sku).strip(), 
+                            pdb_us_data.get(str(sku).strip(), 0.0)))
+        grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
+
+        # 4. 添加Shipping行（按tax_code分组）
+        shipping_rows = []
+        try:
+            # 按tax_code分组汇总Shipping
+            shipping_grouped = merged_df.groupby('tax_code', as_index=False).agg({
+                'Total_shipping': 'sum'
+            })
+            
+            for _, row in shipping_grouped.iterrows():
+                tax_code = row['tax_code']
+                total_shipping = row['Total_shipping']
+                if total_shipping != 0:  # 只添加有运费的税码
+                    shipping_rows.append({
+                        'master_sku': 'Shipping',
+                        'tax_code': tax_code,
+                        'total QTY': 1,
+                        'total amount': total_shipping,
+                        'product_rate': total_shipping,
+                        'product_cost': 0,
+                        'total_cost': 0
+                    })
+        except KeyError as e:
+            print(f"[Warning] 缺少Total_shipping列: {str(e)}")
+        except Exception as e:
+            print(f"[Error] 添加Shipping行失败: {str(e)}")
+        
+        # 合并Shipping行
+        if shipping_rows:
+            shipping_df = pd.DataFrame(shipping_rows)
+            grouped = pd.concat([grouped, shipping_df], ignore_index=True)
+
+        # 5. 列顺序调整
+        final_columns = [
+            'master_sku', 'tax_code', 'total QTY', 
+            'total amount', 'product_rate', 'product_cost', 'total_cost'
+        ]
+        return grouped[final_columns]
+
+    except Exception as e:
+        print(f"[Error] 生成订单导入表失败: {str(e)}")
+        return pd.DataFrame()
+
 # ================================ GUI界面类 ================================
 class AmazonProcessor(tk.Tk):
     def __init__(self):
@@ -688,9 +770,8 @@ class AmazonProcessor(tk.Tk):
                 f"icon_path: {icon_path}"
             )
 
-        # ====== 新增代码 ======
         # 检查用户认证状态（首次运行检测）
-        self.check_auth_status()  # <--- 新增调用
+        self.check_auth_status()
 
         self.title("CA Amazon Processor v3.1")
         self.geometry("600x570")
@@ -703,7 +784,6 @@ class AmazonProcessor(tk.Tk):
         self.tax_report_mapping = {}  # 存储order-id到Jurisdiction_Name的映射
         self.create_widgets()
         
-        # ====== 新增方法 ======
     def check_auth_status(self):
         """首次运行时检查Google认证状态"""
         token_path = os.path.join(
@@ -805,7 +885,7 @@ class AmazonProcessor(tk.Tk):
         tk.Button(self, text="Submit", command=self.process_data,
                  font=('Arial',12), bg="#2196F3", fg="white",
                  width=20).pack(pady=20)
-
+        
     def process_data(self):
         """Enhanced data processing logic with merging"""
         if not self.file_path.get() or not self.save_path.get():
@@ -930,7 +1010,7 @@ class AmazonProcessor(tk.Tk):
                         if qty_df is not None and order_df is not None:
                             merged_month = merge_order_qty(order_df, qty_df, raw_source_df)
                             if merged_month is not None:
-                                # ====== 新增：添加tax_location列 ======
+                                # ====== 添加tax_location和tax_code列 ======
                                 if tax_report_mapping:
                                     merged_month['tax_location'] = merged_month['order-id'].map(tax_report_mapping).fillna('')
                                     print(f"[税务位置] 为 {len(merged_month)} 条记录添加了tax_location列")
@@ -938,7 +1018,6 @@ class AmazonProcessor(tk.Tk):
                                     merged_month['tax_location'] = ''
                                     print("[税务位置] 无税务报表数据，tax_location列为空")
                                 
-                                # ====== 新增：添加tax_code列 ======
                                 merged_month['tax_code'] = merged_month['tax_location'].apply(calculate_tax_code)
                                 print(f"[税务代码] 为 {len(merged_month)} 条记录添加了tax_code列")
                                 
@@ -951,74 +1030,20 @@ class AmazonProcessor(tk.Tk):
                                 all_merged.append(merged_month)
 
                                 if not merged_month.empty:
-                                    required_cols = ['master_sku', 'QTY', 'Total_amount']
-                                    if all(col in merged_month.columns for col in required_cols):
-                                        grouped = merged_month.groupby('master_sku', as_index=False).agg({
-                                            'QTY': 'sum',                
-                                            'Total_amount': 'sum'        
-                                        }).rename(columns={
-                                            'QTY': 'total QTY',          
-                                            'Total_amount': 'total amount'
-                                        })
-
-                                        if not grouped.empty:
-                                            # 处理除零错误
-                                            grouped['product_rate'] = np.where(
-                                                grouped['total QTY'] > 0,
-                                                (grouped['total amount'] / grouped['total QTY']).round(2),
-                                                0.0  # QTY为0时设为0
-                                            )
-                                            
-                                        # 计算product_cost（注意缩进层级）
-                                        grouped['product_cost'] = grouped['master_sku'].apply(
-                                            lambda sku: (  # 括号开始
-                                                0.0 
-                                                if str(sku).strip().lower() == "shipping"  # 条件判断
-                                                else landed_cost_data.get(  # 函数调用换行缩进
-                                                    str(sku).strip(),  # 参数1（4空格缩进）
-                                                    pdb_us_data.get(str(sku).strip(), None)  # 参数2（与参数1对齐）
-                                                )  # get方法闭合
-                                            )  # lambda表达式闭合
-                                        )
-
-                                        # 计算total_cost（与上一代码块同级缩进）
-                                        grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
-
-                                            # ========== 新增代码：添加Shipping汇总行 ==========
-                                        try:
-                                               # 获取当月总运费（从order_details数据）
-                                            sum_total_shipping = merged_month['Total_shipping'].sum()
-        
-                                            if sum_total_shipping != 0:
-                                                new_row = pd.DataFrame([{
-                                                    'master_sku': 'Shipping',
-                                                    'total QTY': 1,
-                                                    'total amount': sum_total_shipping,
-                                                    'product_rate': sum_total_shipping,
-                                                    'product_cost': 0,
-                                                    'total_cost': 0
-
-                                            }])
-            
-                                            # 合并新行（确保列顺序一致）
-                                            grouped = pd.concat([grouped, new_row], ignore_index=True)
-            
-                                        except KeyError as e:
-                                            print(f"[Warning] {month_key}_order_details 缺少Total_shipping列: {str(e)}")
-                                        except Exception as e:
-                                            print(f"[Error] 添加Shipping行失败: {str(e)}")
-
-                                        grouped.to_excel(
+                                    # 使用新函数处理order_import
+                                    order_import_df = generate_order_import_sheet(
+                                        merged_month, 
+                                        landed_cost_data,
+                                        pdb_us_data
+                                    )
+                                    
+                                    if not order_import_df.empty:
+                                        order_import_df.to_excel(
                                             writer,
                                             sheet_name=f"{month_key}_order_import",
                                             index=False
                                         )
                     
-
-                    
-                                    else:
-                                        print(f"[Warning] {month_key}_order_details 缺少必要列")
-
                 else:
                     # 处理非分月情况
                     qty_df, _, _ = process_qty_data(self.file_path.get(), start_date, end_date)
@@ -1034,7 +1059,7 @@ class AmazonProcessor(tk.Tk):
                     if qty_df is not None and order_df is not None:
                         merged_all = merge_order_qty(order_df, qty_df, raw_source_df)
                         if merged_all is not None:
-                            # ====== 新增：添加tax_location列 ======
+                            # ====== 添加tax_location和tax_code列 ======
                             if tax_report_mapping:
                                 merged_all['tax_location'] = merged_all['order-id'].map(tax_report_mapping).fillna('')
                                 print(f"[税务位置] 为 {len(merged_all)} 条记录添加了tax_location列")
@@ -1042,7 +1067,6 @@ class AmazonProcessor(tk.Tk):
                                 merged_all['tax_location'] = ''
                                 print("[税务位置] 无税务报表数据，tax_location列为空")
                             
-                            # ====== 新增：添加tax_code列 ======
                             merged_all['tax_code'] = merged_all['tax_location'].apply(calculate_tax_code)
                             print(f"[税务代码] 为 {len(merged_all)} 条记录添加了tax_code列")
                             
@@ -1054,84 +1078,19 @@ class AmazonProcessor(tk.Tk):
                             all_merged.append(merged_all)
 
                             if not merged_all.empty:
-                                required_cols = ['master_sku', 'QTY', 'Total_amount']
-                                if all(col in merged_all.columns for col in required_cols):
-                                    grouped = merged_all.groupby('master_sku', as_index=False).agg({
-                                        'QTY': 'sum',               
-                                        'Total_amount': 'sum'        
-                                    }).rename(columns={
-                                        'QTY': 'total QTY',
-                                        'Total_amount': 'total amount'
-                                    })
-
-                                    try:
-                                        if 'total QTY' in grouped.columns and 'total amount' in grouped.columns:
-                                            grouped['product_rate'] = grouped['total amount'] / grouped['total QTY']
-                                            # 处理无效值
-                                            grouped['product_rate'] = grouped['product_rate'].replace([np.inf, -np.inf], 0).fillna(0).round(2)
-                                    except Exception as e:
-                                        print(f"[Error] 计算product_rate失败: {str(e)}")
-
-                                    # 计算product_cost（注意缩进层级）
-                                    grouped['product_cost'] = grouped['master_sku'].apply(
-                                        lambda sku: (  # 括号开始
-                                            0.0 
-                                            if str(sku).strip().lower() == "shipping"  # 条件判断
-                                            else landed_cost_data.get(  # 函数调用换行缩进
-                                                str(sku).strip(),  # 参数1（4空格缩进）
-                                                pdb_us_data.get(str(sku).strip(), None)  # 参数2（与参数1对齐）
-                                            )  # get方法闭合
-                                        )  # lambda表达式闭合
-                                    )
-
-                                    # 计算total_cost（与上一代码块同级缩进）
-                                    grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
-                                    
-
-                                    # ========== 新增代码开始 ========== （与try同级缩进）
-                                    try:
-                                        # 添加Shipping行逻辑    
-                                            # ========== 新增代码：添加Shipping汇总行 ==========
-                                            sum_total_shipping = merged_all['Total_shipping'].sum()
-        
-                                            if sum_total_shipping != 0:
-                                                new_row = pd.DataFrame([{
-                                                    'master_sku': 'Shipping',
-                                                    'total QTY': 1,
-                                                    'total amount': sum_total_shipping,
-                                                    'product_rate': sum_total_shipping,
-                                                    'product_cost': 0,
-                                                    'total_cost': 0
-                                                }])
-            
-                                                # 确保列顺序匹配
-                                                new_row = new_row[grouped.columns]
-                                                grouped = pd.concat([grouped, new_row], ignore_index=True)
-            
-                                    except KeyError as e:
-                                        print(f"[Warning] order_details 缺少Total_shipping列: {str(e)}")
-                                    except Exception as e:
-                                        print(f"[Error] 添加Shipping行失败: {str(e)}")
-
-                                    # 列顺序调整（与 grouped 生成代码同级缩进）
-                                    final_columns = [
-                                        'master_sku', 
-                                        'total QTY', 
-                                        'total amount', 
-                                        'product_rate',
-                                        'product_cost', 
-                                        'total_cost'
-                                    ]
-                                    grouped = grouped[final_columns]
-
-                                    grouped.to_excel(
+                                # 使用新函数处理order_import
+                                order_import_df = generate_order_import_sheet(
+                                    merged_all, 
+                                    landed_cost_data,
+                                    pdb_us_data
+                                )
+                                
+                                if not order_import_df.empty:
+                                    order_import_df.to_excel(
                                         writer,
                                         sheet_name='order_import',
                                         index=False
                                     )
-                                else:
-                                    print("[Warning] order_details 缺少必要列")
-
 
             messagebox.showinfo(
                 "Processing Complete",
@@ -1140,7 +1099,7 @@ class AmazonProcessor(tk.Tk):
             
         except Exception as e:
             messagebox.showerror("Processing Error", f"Data processing failed:\n{str(e)}")
-
+        
     def calculate_amount_sum(self, file_path):
         try:
             df = pd.read_csv(file_path, delimiter='\t')
@@ -1153,9 +1112,7 @@ class AmazonProcessor(tk.Tk):
         """加载税务报表文件（新增功能）"""
         path = filedialog.askopenfilename(
             filetypes=[
-                #("Excel Files", "*.xlsx"),
                 ("CSV Files", "*.csv")
-                #("All Files", "*.*")
             ],
             title="Select Tax Report"
         )
