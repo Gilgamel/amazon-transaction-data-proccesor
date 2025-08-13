@@ -627,6 +627,31 @@ def process_refund_data(raw_df):
         messagebox.showerror("处理错误", f"退款表处理失败:\n{str(e)}")
         return None
 
+# ================================ 新增函数：计算税务代码 ================================
+def calculate_tax_code(tax_location):
+    """根据税务位置计算税务代码"""
+    if not tax_location:
+        return ''
+    
+    jurisdiction_upper = tax_location.upper()
+    
+    if jurisdiction_upper in ['MANITOBA', 'SASKATCHEWAN', 'ALBERTA', 'QUEBEC', 
+                             'BRITISH COLUMBIA', 'NUNAVUT', 'NORTHWEST TERRITORIES', 
+                             'YUKON TERRITORY']:
+        return 'GST'
+    elif jurisdiction_upper == 'NEW BRUNSWICK':
+        return 'HST NB 2016'
+    elif jurisdiction_upper == 'ONTARIO':
+        return 'HST ON'
+    elif jurisdiction_upper == 'NOVA SCOTIA':
+        return 'HST NS 2025'
+    elif jurisdiction_upper == 'PRINCE EDWARD ISLAND':
+        return 'HST PEI'
+    elif jurisdiction_upper == 'NEWFOUNDLAND AND LABRADOR':
+        return 'HST NL 2016'
+    else:
+        return ''
+
 # ================================ GUI界面类 ================================
 class AmazonProcessor(tk.Tk):
     def __init__(self):
@@ -913,6 +938,10 @@ class AmazonProcessor(tk.Tk):
                                     merged_month['tax_location'] = ''
                                     print("[税务位置] 无税务报表数据，tax_location列为空")
                                 
+                                # ====== 新增：添加tax_code列 ======
+                                merged_month['tax_code'] = merged_month['tax_location'].apply(calculate_tax_code)
+                                print(f"[税务代码] 为 {len(merged_month)} 条记录添加了tax_code列")
+                                
                                 # 写入订单详情表
                                 merged_month.to_excel(
                                     writer,
@@ -1012,6 +1041,10 @@ class AmazonProcessor(tk.Tk):
                             else:
                                 merged_all['tax_location'] = ''
                                 print("[税务位置] 无税务报表数据，tax_location列为空")
+                            
+                            # ====== 新增：添加tax_code列 ======
+                            merged_all['tax_code'] = merged_all['tax_location'].apply(calculate_tax_code)
+                            print(f"[税务代码] 为 {len(merged_all)} 条记录添加了tax_code列")
                             
                             merged_all.to_excel(
                                 writer,
