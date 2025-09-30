@@ -338,6 +338,15 @@ def generate_summary(raw_df, start_date, end_date):
         
         raw_df['posted-date'] = pd.to_datetime(raw_df['posted-date'], format='%d.%m.%Y', errors='coerce')
         raw_df = raw_df.dropna(subset=['posted-date'])
+
+        # 确保 start_date 和 end_date 是 datetime 类型
+        if isinstance(start_date, str):
+            start_date = datetime.strptime(start_date, "%Y-%m-%d")
+        if isinstance(end_date, str):
+            end_date = datetime.strptime(end_date, "%Y-%m-%d")
+        
+        print(f"[Debug] 日期范围: {start_date} 到 {end_date}")
+        print(f"[Debug] 数据日期范围: {raw_df['posted-date'].min()} 到 {raw_df['posted-date'].max()}")
         
         mask = (raw_df['posted-date'] >= start_date) & (raw_df['posted-date'] <= end_date)
         df = raw_df[mask].copy()
@@ -935,7 +944,7 @@ class AmazonProcessor(tk.Tk):
 
             # 读取原始数据副本用于QTY填充
             raw_source_df = pd.read_csv(self.file_path.get(), delimiter='\t').iloc[1:]
-            raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], errors='coerce')
+            raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], format='%d.%m.%Y', errors='coerce')
             
             # ========== 第二步：加载成本表 ==========
             print("\n[步骤2/4] 开始加载成本数据...")
