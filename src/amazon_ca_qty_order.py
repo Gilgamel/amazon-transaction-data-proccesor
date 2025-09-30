@@ -1009,11 +1009,22 @@ class AmazonProcessor(tk.Tk):
                         qty_df, _, _ = process_qty_data(month_df, month_start, month_end)
                         order_df = process_order_data(month_df)
                         
+                        # Refund
+                        refund_df = process_refund_data(month_df)
+
                         # 写入原有sheet
                         if qty_df is not None:
                             qty_df.to_excel(writer, sheet_name=f"{month_key}_qty", index=False)
                         if order_df is not None:
                             order_df.to_excel(writer, sheet_name=f"{month_key}_order", index=False)
+                        
+
+                        # refund sheet
+                        if refund_df is not None:
+                            refund_df.to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
+                            print(f"✅ 已生成 {month_key}_refund")
+
+
                         
                         # 执行分月合并
                         if qty_df is not None and order_df is not None:
@@ -1058,12 +1069,22 @@ class AmazonProcessor(tk.Tk):
                     qty_df, _, _ = process_qty_data(self.file_path.get(), start_date, end_date)
                     order_df = process_order_data(raw_df)
                     
+                    # add refund
+                    refund_df = process_refund_data(raw_df)
+
+
                     # 写入原有sheet
                     if qty_df is not None:
                         qty_df.to_excel(writer, sheet_name='qty', index=False)
                     if order_df is not None:
                         order_df.to_excel(writer, sheet_name='order', index=False)
                     
+                    # refund
+                    if refund_df is not None :
+                        refund_df.to_excel(writer, sheet_name='refund', index=False)
+                        print("✅ 已生成 refund")
+
+
                     # 执行整体合并
                     if qty_df is not None and order_df is not None:
                         merged_all = merge_order_qty(order_df, qty_df, raw_source_df)
