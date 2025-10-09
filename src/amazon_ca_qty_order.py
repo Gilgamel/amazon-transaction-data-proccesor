@@ -112,7 +112,6 @@ def get_resource_path(relative_path):
         base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     full_path = os.path.join(base_path, relative_path)
-    print(f"[路径追踪] 资源解析：{full_path}")
     return full_path
 
 # ================== 新增函数：加载Google Sheet数据 ==================
@@ -174,11 +173,9 @@ def add_master_sku_from_gsheet(df):
         creds = get_google_creds()
         client = gspread.authorize(creds)
         
-        # ==== 修改点1：移除服务账号相关提示 ====
         spreadsheet = client.open("SKU Manual Mapping")
         sheet = spreadsheet.sheet1
         
-        # ==== 修改点2：增强列名验证 ====
         headers = sheet.row_values(1)
         required_columns = ['channel_sku', 'sku_backup']
         
@@ -190,7 +187,6 @@ def add_master_sku_from_gsheet(df):
         ]
         
         if missing:
-            # 生成友好的列名建议
             suggestions = [
                 f"现有列：{headers}\n"
                 f"需要列：{required_columns}\n"
@@ -200,20 +196,16 @@ def add_master_sku_from_gsheet(df):
             ]
             raise ValueError("\n".join(suggestions))
         
-        # ==== 修改点3：优化数据加载 ====
         records = sheet.get_all_records()
         sku_mapping = {}
         
         for idx, row in enumerate(records, start=2):
-            # 统一处理空值和类型
             channel_sku = str(row.get('channel_sku', '')).strip()
             sku_backup = str(row.get('sku_backup', '')).strip()
             
             if not channel_sku:
-                print(f"[跳过] 第{idx}行：channel_sku为空")
                 continue
                 
-            # 重复检查
             if channel_sku in sku_mapping:
                 print(f"[警告] 重复channel_sku：{channel_sku} → 将覆盖前值")
                 
@@ -225,7 +217,6 @@ def add_master_sku_from_gsheet(df):
         return df
 
     except gspread.exceptions.APIError as e:
-        # ==== 修改点4：精准识别权限问题 ====
         error_msg = f"访问Google Sheet失败：{e.response.text}"
         if "PERMISSION_DENIED" in str(e):
             error_msg += "\n请确认：\n1. 已把表格分享给您的Google账号\n2. 表格ID正确"
@@ -238,43 +229,34 @@ def add_master_sku_from_gsheet(df):
             "将继续使用原始SKU数据")
         return df
 
-# 获取图标路径
-icon_path = get_resource_path("resources/icon/app.ico")
-
 # ================================ 修改后的QTY填充逻辑 ================================
 def fill_missing_qty(merged_df, raw_source_df):
     """填充缺失的QTY值（新增sku匹配条件）"""
     try:
-        # 仅处理QTY为空的情况
         mask = merged_df['QTY'].isna()
         if not mask.any():
             return merged_df
         
-        # 获取需要填充的行（新增sku字段）
         fill_rows = merged_df[mask][['order-id', 'shipment-id', 'sku']].drop_duplicates()
         
-        # 从原始数据中提取相关记录（新增sku匹配）
         source_data = raw_source_df[
             (raw_source_df['amount-type'] == 'ItemWithheldTax') &
             (raw_source_df['transaction-type'] == 'Order') &
-            (raw_source_df['sku'].notna())  # 确保sku不为空
+            (raw_source_df['sku'].notna())
         ]
         
-        # 计算补充数量（新增sku分组）
         qty_lookup = source_data.groupby(
-            ['order-id', 'shipment-id', 'sku']  # 新增sku分组
+            ['order-id', 'shipment-id', 'sku']
         )['quantity-purchased'].sum().reset_index()
         qty_lookup.rename(columns={'quantity-purchased': '补充QTY'}, inplace=True)
         
-        # 合并补充数据（新增sku匹配）
         filled_df = pd.merge(
             merged_df,
             qty_lookup,
-            on=['order-id', 'shipment-id', 'sku'],  # 新增sku字段
+            on=['order-id', 'shipment-id', 'sku'],
             how='left'
         )
         
-        # 填充逻辑保持不变
         filled_df['QTY'] = filled_df['QTY'].fillna(filled_df['补充QTY']).fillna(0)
         filled_df.drop(columns=['补充QTY'], inplace=True)
         
@@ -291,13 +273,11 @@ def merge_order_qty(order_df, qty_df, raw_source_df=None):
     try:
         merge_keys = ['order-id', 'shipment-id', 'sku']
         
-        # 数据验证
         for df, name in [(order_df, 'Order'), (qty_df, 'QTY')]:
             missing = [col for col in merge_keys if col not in df.columns]
             if missing:
                 raise ValueError(f"{name}表缺少关键列: {', '.join(missing)}")
         
-        # 合并数据
         merged_df = pd.merge(
             order_df,
             qty_df[merge_keys + ['quantity-purchased']],
@@ -305,21 +285,15 @@ def merge_order_qty(order_df, qty_df, raw_source_df=None):
             how='left'
         )
         
-        # 列重命名
         if 'quantity-purchased' in merged_df.columns:
             merged_df.rename(columns={'quantity-purchased': 'QTY'}, inplace=True)
         
-        # 数量填充
         if raw_source_df is not None:
             merged_df = fill_missing_qty(merged_df, raw_source_df)
         
-        # 添加master_sku列
         merged_df = add_master_sku_from_gsheet(merged_df)
         
-        # 列顺序调整（确保master_sku在第一列）
         columns = [col for col in merged_df.columns if col != 'master_sku'] + ['master_sku']
-        print(f"[Debug] 最终列顺序：{columns}")
-        
         return merged_df[columns]
         
     except Exception as e:
@@ -339,14 +313,12 @@ def generate_summary(raw_df, start_date, end_date):
         raw_df['posted-date'] = pd.to_datetime(raw_df['posted-date'], format='%d.%m.%Y', errors='coerce')
         raw_df = raw_df.dropna(subset=['posted-date'])
 
-        # 确保 start_date 和 end_date 是 datetime 类型
         if isinstance(start_date, str):
             start_date = datetime.strptime(start_date, "%Y-%m-%d")
         if isinstance(end_date, str):
             end_date = datetime.strptime(end_date, "%Y-%m-%d")
         
         print(f"[Debug] 日期范围: {start_date} 到 {end_date}")
-        print(f"[Debug] 数据日期范围: {raw_df['posted-date'].min()} 到 {raw_df['posted-date'].max()}")
         
         mask = (raw_df['posted-date'] >= start_date) & (raw_df['posted-date'] <= end_date)
         df = raw_df[mask].copy()
@@ -451,6 +423,7 @@ def process_order_data(raw_df):
     """订单表处理（修复Shipping Tax问题）"""
     try:
         df = raw_df.copy()
+        print(f"[order data] 原始数据行数: {len(df)}")
         df = df[
             (df['transaction-type'] == 'Order') &
             (df['amount-type'].isin(['ItemPrice', 'ItemWithheldTax', 'Promotion', 'Tax'])) &
@@ -469,9 +442,7 @@ def process_order_data(raw_df):
         
         df['des-type'] = df['amount-description'] + ":" + df['amount-type']
         
-        # 修复1: 添加Shipping Tax的des-type
         df.loc[(df['amount-description'] == 'ShippingTax') & (df['amount-type'] == 'ItemPrice'), 'des-type'] = "Shipping:Tax"
-        
         
         pivot_df = df.pivot_table(
             index=['order-id', 'shipment-id', 'sku'],
@@ -487,12 +458,11 @@ def process_order_data(raw_df):
             "MarketplaceFacilitatorVAT-Principal:ItemWithheldTax",
             "LowValueGoodsTax-Principal:ItemWithheldTax",
             "Shipping:ItemPrice", "Shipping:Promotion",
-            "Shipping:Tax",  # 修复2: 添加Shipping:Tax列
+            "Shipping:Tax",
             "GiftWrap:ItemPrice", "GiftWrap:Promotion",
             "GiftWrapTax:ItemPrice", "MarketplaceFacilitatorTax-Other:ItemWithheldTax","MarketplaceFacilitatorTax-Shipping:ItemWithheldTax"
         ]
 
-        # 确保所有需要的列都存在
         for col in required_columns:
             if col not in pivot_df.columns:
                 pivot_df[col] = 0
@@ -512,8 +482,6 @@ def process_order_data(raw_df):
         pivot_df['Shipping'] = pivot_df['Shipping:ItemPrice'] + pivot_df['Shipping:Promotion']
         pivot_df = pivot_df.drop(['Shipping:ItemPrice', 'Shipping:Promotion'], axis=1, errors='ignore')
         
-        # 修复3: 正确提取Shipping Tax值
-        
         pivot_df['Shipping Tax'] = pivot_df['Shipping:Tax'] + pivot_df['MarketplaceFacilitatorTax-Shipping:ItemWithheldTax']
         pivot_df = pivot_df.drop(['Shipping:Tax'], axis=1, errors='ignore')
 
@@ -529,7 +497,6 @@ def process_order_data(raw_df):
 
         pivot_df['Total_amount'] = pivot_df[['Product Tax', 'Product Amount', 'Giftwrap', 'Giftwrap Tax']].sum(axis=1)
         
-        # 确保Shipping Tax列存在
         if 'Shipping Tax' not in pivot_df.columns:
             pivot_df['Shipping Tax'] = 0
             
@@ -555,15 +522,42 @@ def process_order_data(raw_df):
         messagebox.showerror("处理错误", f"订单表处理失败:\n{str(e)}")
         return None
 
-def process_refund_data(raw_df):
-    """退款表处理（保持原样）"""
+def process_refund_data(refund_raw_df):
+    print("=== [Refund Debug 0] marketplace-name unique ===")
+    print(refund_raw_df['marketplace-name'].unique())
+
+    print("=== [Refund Debug 1] transaction-type unique ===")
+    print(refund_raw_df['transaction-type'].unique())
+
+    print("=== [Refund Debug 2] Refund candidate rows ===")
+    print(refund_raw_df[
+        refund_raw_df['transaction-type'].str.lower().str.contains('refund', na=False)][['order-id', 'transaction-type', 'marketplace-name']].head(10))
+
+    """退款表处理（修复版）"""
     try:
-        df = raw_df.copy()
-        df = df[
-            (df['transaction-type'] == 'Refund') &
-            (df['marketplace-name'] == 'Amazon.ca')
+        refund_df = refund_raw_df.copy()
+
+        print(f"[Refund Debug] 原始数据行数: {len(refund_df)}")
+        print(f"[Refund Debug] transaction-type 唯一值: {refund_df['transaction-type'].unique()}")
+        
+        original_count = len(refund_df)
+        
+        refund_df = refund_df[
+            (refund_df['transaction-type'].str.lower().str.contains('refund', na=False)) &
+            (refund_df['marketplace-name'] == 'Amazon.ca')
         ]
         
+        print(f"[Refund Debug] 过滤后行数: {len(refund_df)} (减少了 {original_count - len(refund_df)} 行)")
+        print(refund_df[['order-id', 'shipment-id', 'sku']].isna().sum())
+        print(refund_df[['order-id', 'shipment-id', 'sku']].dropna().shape)
+        print(refund_df[['order-id', 'shipment-id', 'sku']].head(10))
+
+
+
+        if len(refund_df) == 0:
+            print("[Refund Debug] 过滤后无数据")
+            return None
+
         cols_to_drop = [
             'settlement-id', 'settlement-start-date', 'settlement-end-date',
             'deposit-date', 'total-amount', 'currency', 'transaction-type',
@@ -572,11 +566,15 @@ def process_refund_data(raw_df):
             'order-item-code', 'merchant-order-item-id',
             'merchant-adjustment-item-id', 'quantity-purchased', 'promotion-id'
         ]
-        df = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
+        refund_df = refund_df.drop(columns=[c for c in cols_to_drop if c in refund_df.columns])
         
-        df['des-type'] = df['amount-description'] + ":" + df['amount-type']
-        pivot_df = df.pivot_table(
-            index=['order-id', 'shipment-id', 'sku'],
+        refund_df['des-type'] = refund_df['amount-description'] + ":" + refund_df['amount-type']
+
+        index_cols = ['order-id', 'sku']
+        if 'shipment-id' in refund_df.columns and refund_df['shipment-id'].notna().any():index_cols.insert(1, 'shipment-id')
+
+        pivot_df = refund_df.pivot_table(
+            index= index_cols,
             columns='des-type',
             values='amount',
             aggfunc='sum',
@@ -637,16 +635,22 @@ def process_refund_data(raw_df):
         pivot_df['tax_rate'] = pivot_df['tax_rate'].apply(lambda x: f"{x:.0%}")
 
         final_columns = [
-            'order-id', 'shipment-id', 'sku',
+            'order-id', 'sku',
             'Product Amount', 'Product Tax', 'tax_rate',
             'Shipping', 'Shipping Tax', 'Total_shipping',
             'Giftwrap', 'Giftwrap Tax', 'Total_amount'
         ]
+
+        if 'shipment-id' in pivot_df.columns:
+            final_columns.insert(1, 'shipment-id')
         
-        return pivot_df[final_columns].sort_values("shipment-id")
+        print(f"[Refund Debug] 最终生成的退款表行数: {len(pivot_df)}")
+        return pivot_df[final_columns]
 
     except Exception as e:
         messagebox.showerror("处理错误", f"退款表处理失败:\n{str(e)}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # ================================ 新增函数：计算税务代码 ================================
@@ -678,7 +682,6 @@ def calculate_tax_code(tax_location):
 def generate_order_import_sheet(merged_df, landed_cost_data, pdb_us_data):
     """生成按master_sku和tax_code分组的订单导入表"""
     try:
-        # 1. 按master_sku和tax_code分组
         grouped = merged_df.groupby(['master_sku', 'tax_code'], as_index=False).agg({
             'QTY': 'sum',
             'Total_amount': 'sum'
@@ -687,24 +690,20 @@ def generate_order_import_sheet(merged_df, landed_cost_data, pdb_us_data):
             'Total_amount': 'total amount'
         })
 
-        # 2. 计算产品单价
         grouped['product_rate'] = np.where(
             grouped['total QTY'] > 0,
             (grouped['total amount'] / grouped['total QTY']).round(2),
             0.0
         )
 
-        # 3. 计算产品成本
         grouped['product_cost'] = grouped['master_sku'].apply(
             lambda sku: 0.0 if str(sku).strip().lower() == "shipping" 
                         else landed_cost_data.get(str(sku).strip(), 
                             pdb_us_data.get(str(sku).strip(), 0.0)))
         grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
 
-        # 4. 添加Shipping行（按tax_code分组）
         shipping_rows = []
         try:
-            # 按tax_code分组汇总Shipping
             shipping_grouped = merged_df.groupby('tax_code', as_index=False).agg({
                 'Total_shipping': 'sum'
             })
@@ -712,7 +711,7 @@ def generate_order_import_sheet(merged_df, landed_cost_data, pdb_us_data):
             for _, row in shipping_grouped.iterrows():
                 tax_code = row['tax_code']
                 total_shipping = row['Total_shipping']
-                if total_shipping != 0:  # 只添加有运费的税码
+                if total_shipping != 0:
                     shipping_rows.append({
                         'master_sku': 'Shipping',
                         'tax_code': tax_code,
@@ -722,17 +721,13 @@ def generate_order_import_sheet(merged_df, landed_cost_data, pdb_us_data):
                         'product_cost': 0,
                         'total_cost': 0
                     })
-        except KeyError as e:
-            print(f"[Warning] 缺少Total_shipping列: {str(e)}")
         except Exception as e:
             print(f"[Error] 添加Shipping行失败: {str(e)}")
         
-        # 合并Shipping行
         if shipping_rows:
             shipping_df = pd.DataFrame(shipping_rows)
             grouped = pd.concat([grouped, shipping_df], ignore_index=True)
 
-        # 5. 列顺序调整
         final_columns = [
             'master_sku', 'tax_code', 'total QTY', 
             'total amount', 'product_rate', 'product_cost', 'total_cost'
@@ -750,36 +745,20 @@ class AmazonProcessor(tk.Tk):
 
         try:
             if getattr(sys, 'frozen', False):
-                # 打包后的路径：sys._MEIPASS 指向临时资源目录
                 base_path = sys._MEIPASS
-                print("[Debug] 运行模式: 打包模式")
             else:
-                # 开发模式：从 src 目录向上返回一级到项目根目录
-                current_dir = os.path.dirname(os.path.abspath(__file__))  # src 目录
-                base_path = os.path.dirname(current_dir)                   # 项目根目录
-                print("[Debug] 运行模式: 开发模式")
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                base_path = os.path.dirname(current_dir)
 
-            # 计算图标路径
             icon_path = os.path.join(base_path, "resources", "icon", "app.ico")
             icon_path = os.path.normpath(icon_path)
 
-            # 调试输出
-            print(f"[Debug] 项目根目录: {base_path}")
-            print(f"[Debug] 图标路径: {icon_path}")
-            print(f"[Debug] 文件是否存在: {os.path.exists(icon_path)}")
-
-            # 加载图标
-            self.iconbitmap(icon_path)
+            if os.path.exists(icon_path):
+                self.iconbitmap(icon_path)
 
         except Exception as e:
-            messagebox.showwarning(
-                "图标加载失败",
-                f"错误原因: {str(e)}\n"
-                f"base_path: {base_path}\n"
-                f"icon_path: {icon_path}"
-            )
+            print(f"图标加载失败: {str(e)}")
 
-        # 检查用户认证状态（首次运行检测）
         self.check_auth_status()
 
         self.title("CA Amazon Processor v3.1")
@@ -790,7 +769,7 @@ class AmazonProcessor(tk.Tk):
         self.tax_report_path = tk.StringVar()
         self.true_min_date = datetime(2020,1,1)
         self.true_max_date = datetime.now()
-        self.tax_report_mapping = {}  # 存储order-id到Jurisdiction_Name的映射
+        self.tax_report_mapping = {}
         self.create_widgets()
         
     def check_auth_status(self):
@@ -809,7 +788,6 @@ class AmazonProcessor(tk.Tk):
             )
             if response:
                 try:
-                    # 触发授权流程
                     get_google_creds()  
                     messagebox.showinfo("Authorization Successful", "All features are now available!")
                 except Exception as e:
@@ -817,7 +795,7 @@ class AmazonProcessor(tk.Tk):
                         "Authorization Failed",
                         f"Authorization could not be completed: {str(e)}\nPlease check your internet connection and try again."
                     )
-                    self.destroy()  # 关闭应用
+                    self.destroy()
             else:
                 messagebox.showwarning(
                     "Authorization Required",
@@ -853,7 +831,6 @@ class AmazonProcessor(tk.Tk):
         tk.Entry(save_frame, textvariable=self.save_path, width=55).grid(row=0, column=1)
         tk.Button(save_frame, text="Browse", command=self.save_file, width=10).grid(row=0, column=2, sticky='w')
         
-        # Tax Report框架
         tax_frame = tk.LabelFrame(
             self, 
             text="Tax Report",
@@ -896,35 +873,35 @@ class AmazonProcessor(tk.Tk):
                  width=20).pack(pady=20)
         
     def process_data(self):
-        """Enhanced data processing logic with merging"""
+        """修复版数据处理逻辑 - 确保生成refund表"""
         if not self.file_path.get() or not self.save_path.get():
             messagebox.showwarning("Input Error", "Please select source file and save path")
             return
         
         try:
-            # ========== 第一步：处理Tax Report ==========
+            # ========== 第一步：读取原始数据 ==========
+            raw_source_df = pd.read_csv(self.file_path.get(), delimiter='\t').iloc[1:]
+            raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], format='%d.%m.%Y', errors='coerce')
+            
+            print(f"[原始数据] 总行数: {len(raw_source_df)}")
+            
+            # ========== 第二步：处理Tax Report ==========
             state_tax_data = None
-            tax_report_mapping = {}  # 初始化税务位置映射
+            tax_report_mapping = {}
             
             if self.tax_report_path.get():
                 try:
-                    # 读取tax report文件
                     tax_report_df = pd.read_csv(self.tax_report_path.get())
                     print(f"[Tax Report] 成功加载文件，共 {len(tax_report_df)} 行")
                     
-                    # 标准化列名（去除空格和特殊字符）
                     tax_report_df.columns = [col.strip().replace(' ', '_') for col in tax_report_df.columns]
                     
-                    # 检查必要的列是否存在
                     if 'Jurisdiction_Level' not in tax_report_df.columns or 'Jurisdiction_Name' not in tax_report_df.columns:
                         raise ValueError("Tax Report文件中缺少 'Jurisdiction_Level' 或 'Jurisdiction_Name' 列")
                     
-                    # 筛选Jurisdiction_Level为'State'的数据
                     state_tax_data = tax_report_df[tax_report_df['Jurisdiction_Level'] == 'State']
                     print(f"[Tax Report] 筛选出 {len(state_tax_data)} 条State级别的记录")
                     
-                    # 创建order-id到Jurisdiction_Name的映射
-                    tax_report_mapping = {}
                     for _, row in state_tax_data.iterrows():
                         order_id = str(row.get('Order_ID', '')).strip()
                         jurisdiction = str(row.get('Jurisdiction_Name', '')).strip()
@@ -932,37 +909,31 @@ class AmazonProcessor(tk.Tk):
                             tax_report_mapping[order_id] = jurisdiction
                     print(f"[Tax Report] 创建了 {len(tax_report_mapping)} 条order-id到Jurisdiction_Name的映射")
                     
-                    # 如果筛选结果为空，显示警告
-                    if state_tax_data.empty:
-                        messagebox.showwarning("警告", "Tax Report筛选结果为空，请检查数据")
-                    
                 except Exception as e:
                     messagebox.showerror("Tax Report错误", f"处理Tax Report失败: {str(e)}")
                     state_tax_data = None
-            else:
-                print("[Tax Report] 未提供税务报表路径，跳过处理")
 
-            # 读取原始数据副本用于QTY填充
-            raw_source_df = pd.read_csv(self.file_path.get(), delimiter='\t').iloc[1:]
-            raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], format='%d.%m.%Y', errors='coerce')
-            
-            # ========== 第二步：加载成本表 ==========
+            # ========== 第三步：加载成本表 ==========
             print("\n[步骤2/4] 开始加载成本数据...")
             landed_cost_data = load_gsheet_data("landed_cost")
             pdb_us_data = load_gsheet_data("pdb_us")
         
-            # 检查数据完整性
             if not landed_cost_data or not pdb_us_data:
-                messagebox.showerror(
-                    "数据缺失", 
-                    "无法加载成本表，请检查控制台错误信息"
-                )
+                messagebox.showerror("数据缺失", "无法加载成本表，请检查控制台错误信息")
                 return
             print("✅ 成本数据加载完成")
 
-            # 保持原有处理流程
+            # ========== 第四步：创建独立的数据源 ==========
+            # 关键修复：为refund创建独立的数据副本，不应用任何过滤
             raw_df = raw_source_df.copy()
+            refund_raw_df = raw_source_df.copy()  # 专门用于refund处理的完整数据
+            
+            print(f"[Order处理数据] 行数: {len(raw_df)}")
+            print(f"[Refund处理数据] 行数: {len(refund_raw_df)}")
+            
+            # 只清理日期空值，不进行其他过滤
             raw_df = raw_df.dropna(subset=['posted-date'])
+            refund_raw_df = refund_raw_df.dropna(subset=['posted-date'])
             
             start_date = datetime.strptime(self.start_cal.get_date(), "%Y-%m-%d")
             end_date = datetime.strptime(self.end_cal.get_date(), "%Y-%m-%d")
@@ -982,10 +953,9 @@ class AmazonProcessor(tk.Tk):
                         )
                         start_row += len(pivot) + 3
                 
-                # 2. 写入Tax Report筛选结果（如果存在）
+                # 2. 写入Tax Report筛选结果
                 if state_tax_data is not None and not state_tax_data.empty:
                     try:
-                        # 写入筛选后的Tax Report数据
                         state_tax_data.to_excel(
                             writer, 
                             sheet_name='tax report filter',
@@ -993,15 +963,21 @@ class AmazonProcessor(tk.Tk):
                         )
                         print("✅ Tax Report筛选结果已写入")
                     except Exception as e:
-                        messagebox.showerror("写入错误", f"写入Tax Report筛选结果失败: {str(e)}")
+                        print(f"写入Tax Report筛选结果失败: {str(e)}")
                 
-                # 3. 初始化合并结果存储
-                all_merged = []
-                
-                # 4. Monthly processing logic
+                # 3. Monthly processing logic
                 if start_date.month != end_date.month or start_date.year != end_date.year:
+                    print("\n[分月处理] 开始分月处理数据...")
+                    
+                    # 关键修复：为order和refund分别创建分月数据
                     monthly_data = split_data_by_month(raw_df, start_date, end_date)
+                    refund_monthly_data = split_data_by_month(refund_raw_df, start_date, end_date)
+                    
+                    print(f"[分月处理] 生成 {len(monthly_data)} 个月份的order数据")
+                    print(f"[分月处理] 生成 {len(refund_monthly_data)} 个月份的refund数据")
+                    
                     for month_key, month_df in monthly_data.items():
+                        print(f"\n[处理月份] {month_key}")
                         month_start = month_df['posted-date'].min().to_pydatetime()
                         month_end = month_df['posted-date'].max().to_pydatetime()
                         
@@ -1009,48 +985,58 @@ class AmazonProcessor(tk.Tk):
                         qty_df, _, _ = process_qty_data(month_df, month_start, month_end)
                         order_df = process_order_data(month_df)
                         
-                        # Refund
-                        refund_df = process_refund_data(month_df)
-
-                        # 写入原有sheet
+                        # 关键修复：处理Refund数据 - 使用对应月份的refund数据
+                        refund_df = None
+                        if month_key in refund_monthly_data:
+                            refund_month_df = refund_monthly_data[month_key]
+                            print(f"[Refund处理] 月份 {month_key} 的refund数据行数: {len(refund_month_df)}")
+                            refund_df = process_refund_data(refund_month_df)
+                        else:
+                            print(f"[Refund处理] 月份 {month_key} 无refund数据")
+                        
+                        # 写入sheet
                         if qty_df is not None:
                             qty_df.to_excel(writer, sheet_name=f"{month_key}_qty", index=False)
+                            print(f"✅ 已生成 {month_key}_qty")
+                        
                         if order_df is not None:
                             order_df.to_excel(writer, sheet_name=f"{month_key}_order", index=False)
+                            print(f"✅ 已生成 {month_key}_order")
                         
-
-                        # refund sheet
-                        if refund_df is not None:
+                        # 关键修复：确保refund表一定会被写入，即使为空也创建空表
+                        if refund_df is not None and len(refund_df) > 0:
                             refund_df.to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
-                            print(f"✅ 已生成 {month_key}_refund")
-
-
+                            print(f"✅ 已生成 {month_key}_refund，包含 {len(refund_df)} 行数据")
+                        else:
+                            # 创建空的refund表，确保表头存在
+                            empty_refund_df = pd.DataFrame(columns=[
+                                'order-id', 'shipment-id', 'sku',
+                                'Product Amount', 'Product Tax', 'tax_rate',
+                                'Shipping', 'Shipping Tax', 'Total_shipping',
+                                'Giftwrap', 'Giftwrap Tax', 'Total_amount'
+                            ])
+                            empty_refund_df.to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
+                            print(f"⚠️ {month_key}_refund 无数据，已创建空表")
                         
                         # 执行分月合并
                         if qty_df is not None and order_df is not None:
                             merged_month = merge_order_qty(order_df, qty_df, raw_source_df)
                             if merged_month is not None:
-                                # ====== 添加tax_location和tax_code列 ======
                                 if tax_report_mapping:
                                     merged_month['tax_location'] = merged_month['order-id'].map(tax_report_mapping).fillna('')
-                                    print(f"[税务位置] 为 {len(merged_month)} 条记录添加了tax_location列")
                                 else:
                                     merged_month['tax_location'] = ''
-                                    print("[税务位置] 无税务报表数据，tax_location列为空")
                                 
                                 merged_month['tax_code'] = merged_month['tax_location'].apply(calculate_tax_code)
-                                print(f"[税务代码] 为 {len(merged_month)} 条记录添加了tax_code列")
                                 
-                                # 写入订单详情表
                                 merged_month.to_excel(
                                     writer,
                                     sheet_name=f"{month_key}_order_details",
                                     index=False
                                 )
-                                all_merged.append(merged_month)
+                                print(f"✅ 已生成 {month_key}_order_details")
 
                                 if not merged_month.empty:
-                                    # 使用新函数处理order_import
                                     order_import_df = generate_order_import_sheet(
                                         merged_month, 
                                         landed_cost_data,
@@ -1063,52 +1049,61 @@ class AmazonProcessor(tk.Tk):
                                             sheet_name=f"{month_key}_order_import",
                                             index=False
                                         )
+                                        print(f"✅ 已生成 {month_key}_order_import")
                     
                 else:
                     # 处理非分月情况
+                    print("\n[单月处理] 开始单月处理数据...")
                     qty_df, _, _ = process_qty_data(self.file_path.get(), start_date, end_date)
                     order_df = process_order_data(raw_df)
                     
-                    # add refund
-                    refund_df = process_refund_data(raw_df)
-
-
-                    # 写入原有sheet
+                    # 关键修复：处理Refund数据
+                    print(f"[Refund处理] 单月refund数据行数: {len(refund_raw_df)}")
+                    refund_df = process_refund_data(refund_raw_df)
+                    
+                    # 写入sheet
                     if qty_df is not None:
                         qty_df.to_excel(writer, sheet_name='qty', index=False)
+                        print("✅ 已生成 qty")
+                    
                     if order_df is not None:
                         order_df.to_excel(writer, sheet_name='order', index=False)
+                        print("✅ 已生成 order")
                     
-                    # refund
-                    if refund_df is not None :
+                    # 关键修复：确保refund表一定会被写入
+                    if refund_df is not None and len(refund_df) > 0:
                         refund_df.to_excel(writer, sheet_name='refund', index=False)
-                        print("✅ 已生成 refund")
-
-
+                        print(f"✅ 已生成 refund，包含 {len(refund_df)} 行数据")
+                    else:
+                        # 创建空的refund表
+                        empty_refund_df = pd.DataFrame(columns=[
+                            'order-id', 'shipment-id', 'sku',
+                            'Product Amount', 'Product Tax', 'tax_rate',
+                            'Shipping', 'Shipping Tax', 'Total_shipping',
+                            'Giftwrap', 'Giftwrap Tax', 'Total_amount'
+                        ])
+                        empty_refund_df.to_excel(writer, sheet_name='refund', index=False)
+                        print("⚠️ refund 无数据，已创建空表")
+                    
                     # 执行整体合并
                     if qty_df is not None and order_df is not None:
                         merged_all = merge_order_qty(order_df, qty_df, raw_source_df)
                         if merged_all is not None:
-                            # ====== 添加tax_location和tax_code列 ======
                             if tax_report_mapping:
                                 merged_all['tax_location'] = merged_all['order-id'].map(tax_report_mapping).fillna('')
-                                print(f"[税务位置] 为 {len(merged_all)} 条记录添加了tax_location列")
                             else:
                                 merged_all['tax_location'] = ''
-                                print("[税务位置] 无税务报表数据，tax_location列为空")
                             
                             merged_all['tax_code'] = merged_all['tax_location'].apply(calculate_tax_code)
-                            print(f"[税务代码] 为 {len(merged_all)} 条记录添加了tax_code列")
                             
                             merged_all.to_excel(
                                 writer,
                                 sheet_name='order_details',
                                 index=False
                             )
-                            all_merged.append(merged_all)
+                            print("✅ 已生成 order_details")
 
                             if not merged_all.empty:
-                                # 使用新函数处理order_import
                                 order_import_df = generate_order_import_sheet(
                                     merged_all, 
                                     landed_cost_data,
@@ -1121,6 +1116,7 @@ class AmazonProcessor(tk.Tk):
                                         sheet_name='order_import',
                                         index=False
                                     )
+                                    print("✅ 已生成 order_import")
 
             messagebox.showinfo(
                 "Processing Complete",
@@ -1129,6 +1125,8 @@ class AmazonProcessor(tk.Tk):
             
         except Exception as e:
             messagebox.showerror("Processing Error", f"Data processing failed:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
         
     def calculate_amount_sum(self, file_path):
         try:
@@ -1139,11 +1137,9 @@ class AmazonProcessor(tk.Tk):
             return None
 
     def load_tax_report(self):
-        """加载税务报表文件（新增功能）"""
+        """加载税务报表文件"""
         path = filedialog.askopenfilename(
-            filetypes=[
-                ("CSV Files", "*.csv")
-            ],
+            filetypes=[("CSV Files", "*.csv")],
             title="Select Tax Report"
         )
         if path:
@@ -1171,15 +1167,12 @@ class AmazonProcessor(tk.Tk):
             self.true_min_date = dates.min().to_pydatetime()
             self.true_max_date = dates.max().to_pydatetime()
         
-            # 先配置日期范围限制
             self.start_cal.config(mindate=self.true_min_date, maxdate=self.true_max_date)
             self.end_cal.config(mindate=self.true_min_date, maxdate=self.true_max_date)
         
-            # 再设置选中日期
             self.start_cal.selection_set(self.true_min_date)
             self.end_cal.selection_set(self.true_max_date)
         
-            # 强制刷新控件
             self.start_cal.update()
             self.end_cal.update()
 
