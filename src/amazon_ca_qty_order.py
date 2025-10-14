@@ -730,6 +730,55 @@ def generate_order_import_sheet(merged_df, landed_cost_data, pdb_us_data):
         print(f"[Error] 生成订单导入表失败: {str(e)}")
         return pd.DataFrame()
 
+# ================== 新增函数：生成退款汇总表 ==================
+def generate_refund_summary(monthly_refund_data):
+    """生成退款汇总表，按月份和tax_code进行pivot"""
+    try:
+        if not monthly_refund_data:
+            print("[Refund Summary] 无退款数据")
+            return None
+        
+        # 收集所有月份的退款数据
+        all_refund_data = []
+        for month_key, refund_df in monthly_refund_data.items():
+            if refund_df is not None and len(refund_df) > 0:
+                # 添加月份列
+                refund_df_with_month = refund_df.copy()
+                refund_df_with_month['month'] = month_key
+                all_refund_data.append(refund_df_with_month)
+        
+        if not all_refund_data:
+            print("[Refund Summary] 无有效的退款数据")
+            return None
+        
+        # 合并所有退款数据
+        combined_refund_df = pd.concat(all_refund_data, ignore_index=True)
+        
+        # 创建pivot表：月份为行，tax_code为列，Total_amount为值
+        pivot_table = combined_refund_df.pivot_table(
+            index=['month'],
+            columns=['tax_code'],
+            values='Total_amount',
+            aggfunc='sum',
+            fill_value=0
+        ).round(2)
+        
+        # 添加总计行和总计列
+        pivot_table['Month Total'] = pivot_table.sum(axis=1)
+        pivot_table.loc['Tax Code Total'] = pivot_table.sum(axis=0)
+        
+        # 重置索引，使月份成为一列
+        pivot_table = pivot_table.reset_index()
+        
+        print(f"[Refund Summary] 生成汇总表，包含 {len(pivot_table)-1} 个月份数据")
+        return pivot_table
+        
+    except Exception as e:
+        print(f"[Error] 生成退款汇总表失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return None
+
 # ================================ GUI界面类 ================================
 class AmazonProcessor(tk.Tk):
     def __init__(self):
@@ -930,8 +979,11 @@ class AmazonProcessor(tk.Tk):
             start_date = datetime.strptime(self.start_cal.get_date(), "%Y-%m-%d")
             end_date = datetime.strptime(self.end_cal.get_date(), "%Y-%m-%d")
             
+            # 用于存储所有月份的退款数据
+            all_monthly_refund_data = {}
+            
             with pd.ExcelWriter(self.save_path.get()) as writer:
-                # 1. 写入Summary表
+                # 1. Summary 
                 pivot_tables = generate_summary(raw_df, start_date, end_date)
                 if pivot_tables:
                     start_row = 0
@@ -945,7 +997,10 @@ class AmazonProcessor(tk.Tk):
                         )
                         start_row += len(pivot) + 3
                 
-                # 2. 写入Tax Report筛选结果
+
+
+                
+                # 3. Tax Report Filter
                 if state_tax_data is not None and not state_tax_data.empty:
                     try:
                         state_tax_data.to_excel(
@@ -983,8 +1038,11 @@ class AmazonProcessor(tk.Tk):
                             refund_month_df = refund_monthly_data[month_key]
                             print(f"[Refund处理] 月份 {month_key} 的refund数据行数: {len(refund_month_df)}")
                             refund_df = process_refund_data(refund_month_df, tax_report_mapping)
+                            # 存储退款数据用于汇总
+                            all_monthly_refund_data[month_key] = refund_df
                         else:
                             print(f"[Refund处理] 月份 {month_key} 无refund数据")
+                            all_monthly_refund_data[month_key] = None
                         
                         # 写入sheet
                         if qty_df is not None:
@@ -1053,6 +1111,10 @@ class AmazonProcessor(tk.Tk):
                     print(f"[Refund处理] 单月refund数据行数: {len(refund_raw_df)}")
                     refund_df = process_refund_data(refund_raw_df, tax_report_mapping)
                     
+                    # 存储单月退款数据用于汇总
+                    month_key = start_date.strftime("%Y%m")
+                    all_monthly_refund_data[month_key] = refund_df
+                    
                     # 写入sheet
                     if qty_df is not None:
                         qty_df.to_excel(writer, sheet_name='qty', index=False)
@@ -1109,6 +1171,20 @@ class AmazonProcessor(tk.Tk):
                                         index=False
                                     )
                                     print("✅ 已生成 order_import")
+                
+                # 4. 生成并写入Refund Summary表
+                print("\n[步骤4/4] 生成退款汇总表...")
+                refund_summary_df = generate_refund_summary(all_monthly_refund_data)
+                if refund_summary_df is not None:
+                    refund_summary_df.to_excel(
+                        writer,
+                        sheet_name='Refund Summary',
+                        index=False,
+                        float_format="%.2f"
+                    )
+                    print("✅ 已生成 Refund Summary")
+                else:
+                    print("⚠️ 无退款数据，跳过生成 Refund Summary")
 
             messagebox.showinfo(
                 "Processing Complete",
