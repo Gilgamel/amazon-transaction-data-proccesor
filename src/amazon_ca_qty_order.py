@@ -523,22 +523,10 @@ def process_order_data(raw_df):
         return None
 
 def process_refund_data(refund_raw_df):
-    print("=== [Refund Debug 0] marketplace-name unique ===")
-    print(refund_raw_df['marketplace-name'].unique())
 
-    print("=== [Refund Debug 1] transaction-type unique ===")
-    print(refund_raw_df['transaction-type'].unique())
-
-    print("=== [Refund Debug 2] Refund candidate rows ===")
-    print(refund_raw_df[
-        refund_raw_df['transaction-type'].str.lower().str.contains('refund', na=False)][['order-id', 'transaction-type', 'marketplace-name']].head(10))
-
-    """退款表处理（修复版）"""
     try:
         refund_df = refund_raw_df.copy()
 
-        print(f"[Refund Debug] 原始数据行数: {len(refund_df)}")
-        print(f"[Refund Debug] transaction-type 唯一值: {refund_df['transaction-type'].unique()}")
         
         original_count = len(refund_df)
         
@@ -546,13 +534,6 @@ def process_refund_data(refund_raw_df):
             (refund_df['transaction-type'].str.lower().str.contains('refund', na=False)) &
             (refund_df['marketplace-name'] == 'Amazon.ca')
         ]
-        
-        print(f"[Refund Debug] 过滤后行数: {len(refund_df)} (减少了 {original_count - len(refund_df)} 行)")
-        print(refund_df[['order-id', 'shipment-id', 'sku']].isna().sum())
-        print(refund_df[['order-id', 'shipment-id', 'sku']].dropna().shape)
-        print(refund_df[['order-id', 'shipment-id', 'sku']].head(10))
-
-
 
         if len(refund_df) == 0:
             print("[Refund Debug] 过滤后无数据")
@@ -621,11 +602,20 @@ def process_refund_data(refund_raw_df):
         pivot_df['Giftwrap Tax'] = pivot_df[giftwrap_tax_cols].sum(axis=1)
         pivot_df = pivot_df.drop(giftwrap_tax_cols, axis=1, errors='ignore')
 
-        pivot_df['Total_amount'] = pivot_df[['Product Tax', 'Product Amount', 'Giftwrap', 'Giftwrap Tax']].sum(axis=1)
+        
+
+
+
+
+        # pivot_df['Total_amount'] = pivot_df[['Product Tax', 'Product Amount', 'Giftwrap', 'Giftwrap Tax']].sum(axis=1)
+        exclude_cols = ['shipment-id', 'order-id', 'sku', 'tax_rate']
+        sum_cols = [col for col in pivot_df.columns if col not in exclude_cols]
+        pivot_df['Total_amount'] = pivot_df[sum_cols].sum(axis=1)
+
         
         if 'Shipping Tax' not in pivot_df.columns:
             pivot_df['Shipping Tax'] = 0
-        pivot_df['Total_shipping'] = pivot_df['Shipping'] + pivot_df['Shipping Tax']
+        #pivot_df['Total_shipping'] = pivot_df['Shipping'] + pivot_df['Shipping Tax']
 
         pivot_df['tax_rate'] = np.where(
             pivot_df['Product Amount'] != 0,
@@ -634,16 +624,24 @@ def process_refund_data(refund_raw_df):
         )
         pivot_df['tax_rate'] = pivot_df['tax_rate'].apply(lambda x: f"{x:.0%}")
 
-        final_columns = [
-            'order-id', 'sku',
-            'Product Amount', 'Product Tax', 'tax_rate',
-            'Shipping', 'Shipping Tax', 'Total_shipping',
-            'Giftwrap', 'Giftwrap Tax', 'Total_amount'
-        ]
 
-        if 'shipment-id' in pivot_df.columns:
-            final_columns.insert(1, 'shipment-id')
+        preferred_start = ['order-id', 'shipment-id', 'sku', 'Product Amount', 'Product Tax', 
+                   'Shipping', 'Shipping Tax', 'Giftwrap', 'Giftwrap Tax']
+
+
+        preferred_start = [col for col in preferred_start if col in pivot_df.columns]
+
+
+        all_cols = pivot_df.columns.tolist()
+
+
+        middle_cols = [col for col in all_cols if col not in preferred_start + ['Total_amount', 'tax_rate']]
+
+
+        final_columns = preferred_start + middle_cols + ['Total_amount', 'tax_rate']
+
         
+
         print(f"[Refund Debug] 最终生成的退款表行数: {len(pivot_df)}")
         return pivot_df[final_columns]
 
