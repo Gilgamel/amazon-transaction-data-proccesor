@@ -522,12 +522,10 @@ def process_order_data(raw_df):
         messagebox.showerror("处理错误", f"订单表处理失败:\n{str(e)}")
         return None
 
-def process_refund_data(refund_raw_df):
-    
-
+def process_refund_data(refund_raw_df, tax_report_mapping=None):
+    """处理退款数据，添加tax_location和tax_code列"""
     try:
         refund_df = refund_raw_df.copy()
-
         
         original_count = len(refund_df)
         
@@ -553,7 +551,8 @@ def process_refund_data(refund_raw_df):
         refund_df['des-type'] = refund_df['amount-description'] + ":" + refund_df['amount-type']
 
         index_cols = ['order-id', 'sku']
-        if 'shipment-id' in refund_df.columns and refund_df['shipment-id'].notna().any():index_cols.insert(1, 'shipment-id')
+        if 'shipment-id' in refund_df.columns and refund_df['shipment-id'].notna().any():
+            index_cols.insert(1, 'shipment-id')
 
         pivot_df = refund_df.pivot_table(
             index= index_cols,
@@ -603,20 +602,21 @@ def process_refund_data(refund_raw_df):
         pivot_df['Giftwrap Tax'] = pivot_df[giftwrap_tax_cols].sum(axis=1)
         pivot_df = pivot_df.drop(giftwrap_tax_cols, axis=1, errors='ignore')
 
-        
-
-
-
-
-        # pivot_df['Total_amount'] = pivot_df[['Product Tax', 'Product Amount', 'Giftwrap', 'Giftwrap Tax']].sum(axis=1)
+        # 计算总金额
         exclude_cols = ['shipment-id', 'order-id', 'sku', 'tax_rate']
         sum_cols = [col for col in pivot_df.columns if col not in exclude_cols]
         pivot_df['Total_amount'] = pivot_df[sum_cols].sum(axis=1)
 
+        # 添加tax_location和tax_code列
+        if tax_report_mapping:
+            pivot_df['tax_location'] = pivot_df['order-id'].map(tax_report_mapping).fillna('')
+        else:
+            pivot_df['tax_location'] = ''
+        
+        pivot_df['tax_code'] = pivot_df['tax_location'].apply(calculate_tax_code)
         
         if 'Shipping Tax' not in pivot_df.columns:
             pivot_df['Shipping Tax'] = 0
-        #pivot_df['Total_shipping'] = pivot_df['Shipping'] + pivot_df['Shipping Tax']
 
         pivot_df['tax_rate'] = np.where(
             pivot_df['Product Amount'] != 0,
@@ -625,23 +625,16 @@ def process_refund_data(refund_raw_df):
         )
         pivot_df['tax_rate'] = pivot_df['tax_rate'].apply(lambda x: f"{x:.0%}")
 
-
-        preferred_start = ['order-id', 'shipment-id', 'sku', 'Product Amount', 'Product Tax', 
-                   'Shipping', 'Shipping Tax', 'Giftwrap', 'Giftwrap Tax']
-
+        # 调整列顺序，将tax_location和tax_code放在前面
+        preferred_start = ['order-id', 'shipment-id', 'sku', 
+                   'Product Amount', 'Product Tax', 'Shipping', 'Shipping Tax', 
+                   'Giftwrap', 'Giftwrap Tax']
 
         preferred_start = [col for col in preferred_start if col in pivot_df.columns]
 
-
         all_cols = pivot_df.columns.tolist()
-
-
-        middle_cols = [col for col in all_cols if col not in preferred_start + ['Total_amount', 'tax_rate']]
-
-
-        final_columns = preferred_start + middle_cols + ['Total_amount', 'tax_rate']
-
-        
+        middle_cols = [col for col in all_cols if col not in preferred_start + ['Total_amount', 'tax_rate', 'tax_location', 'tax_code']]
+        final_columns = preferred_start + middle_cols + ['Total_amount', 'tax_rate', 'tax_location', 'tax_code']
 
         print(f"[Refund Debug] 最终生成的退款表行数: {len(pivot_df)}")
         return pivot_df[final_columns]
@@ -984,12 +977,12 @@ class AmazonProcessor(tk.Tk):
                         qty_df, _, _ = process_qty_data(month_df, month_start, month_end)
                         order_df = process_order_data(month_df)
                         
-                        # 关键修复：处理Refund数据 - 使用对应月份的refund数据
+                        # 关键修复：处理Refund数据 - 使用对应月份的refund数据，并传入tax_report_mapping
                         refund_df = None
                         if month_key in refund_monthly_data:
                             refund_month_df = refund_monthly_data[month_key]
                             print(f"[Refund处理] 月份 {month_key} 的refund数据行数: {len(refund_month_df)}")
-                            refund_df = process_refund_data(refund_month_df)
+                            refund_df = process_refund_data(refund_month_df, tax_report_mapping)
                         else:
                             print(f"[Refund处理] 月份 {month_key} 无refund数据")
                         
@@ -1007,12 +1000,12 @@ class AmazonProcessor(tk.Tk):
                             refund_df.to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
                             print(f"✅ 已生成 {month_key}_refund，包含 {len(refund_df)} 行数据")
                         else:
-                            # 创建空的refund表，确保表头存在
+                            # 创建空的refund表，确保表头存在（包含tax_location和tax_code）
                             empty_refund_df = pd.DataFrame(columns=[
                                 'order-id', 'shipment-id', 'sku',
                                 'Product Amount', 'Product Tax', 'tax_rate',
                                 'Shipping', 'Shipping Tax', 'Total_shipping',
-                                'Giftwrap', 'Giftwrap Tax', 'Total_amount'
+                                'Giftwrap', 'Giftwrap Tax', 'Total_amount', 'tax_location', 'tax_code'
                             ])
                             empty_refund_df.to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
                             print(f"⚠️ {month_key}_refund 无数据，已创建空表")
@@ -1056,9 +1049,9 @@ class AmazonProcessor(tk.Tk):
                     qty_df, _, _ = process_qty_data(self.file_path.get(), start_date, end_date)
                     order_df = process_order_data(raw_df)
                     
-                    # 关键修复：处理Refund数据
+                    # 关键修复：处理Refund数据，传入tax_report_mapping
                     print(f"[Refund处理] 单月refund数据行数: {len(refund_raw_df)}")
-                    refund_df = process_refund_data(refund_raw_df)
+                    refund_df = process_refund_data(refund_raw_df, tax_report_mapping)
                     
                     # 写入sheet
                     if qty_df is not None:
@@ -1074,12 +1067,12 @@ class AmazonProcessor(tk.Tk):
                         refund_df.to_excel(writer, sheet_name='refund', index=False)
                         print(f"✅ 已生成 refund，包含 {len(refund_df)} 行数据")
                     else:
-                        # 创建空的refund表
+                        # 创建空的refund表（包含tax_location和tax_code）
                         empty_refund_df = pd.DataFrame(columns=[
-                            'order-id', 'shipment-id', 'sku',
+                            'order-id', 'shipment-id', 'sku', 
                             'Product Amount', 'Product Tax', 'tax_rate',
                             'Shipping', 'Shipping Tax', 'Total_shipping',
-                            'Giftwrap', 'Giftwrap Tax', 'Total_amount'
+                            'Giftwrap', 'Giftwrap Tax', 'Total_amount', 'tax_location', 'tax_code'
                         ])
                         empty_refund_df.to_excel(writer, sheet_name='refund', index=False)
                         print("⚠️ refund 无数据，已创建空表")
