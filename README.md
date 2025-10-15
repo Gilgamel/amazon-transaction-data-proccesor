@@ -45,8 +45,20 @@ pyinstaller --noconfirm --onefile --windowed `
 **Code used to package exe file.**
 
 ```
+# US
+
 pyinstaller --noconfirm --onefile --windowed `
    --add-data "resources/icon;resources/icon" `
    --icon "resources/icon/app.ico" `
    "src/amazon_us_qty_order.py"
+```
+
+
+```
+# CA
+
+pyinstaller --noconfirm --onefile --windowed `
+   --add-data "resources/icon;resources/icon" `
+   --icon "resources/icon/app.ico" `
+   "src/amazon_ca_qty_order.py"
 ```
