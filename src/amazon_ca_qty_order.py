@@ -730,48 +730,45 @@ def generate_order_import_sheet(merged_df, landed_cost_data, pdb_us_data):
         print(f"[Error] 生成订单导入表失败: {str(e)}")
         return pd.DataFrame()
 
-# ================== 新增函数：生成退款汇总表 ==================
-def generate_refund_summary(monthly_refund_data):
-    """生成退款汇总表，按月份和tax_code进行pivot"""
+# ================== 新增函数：生成退款汇总表（每月一个pivot table） ==================
+def generate_refund_summary_monthly(monthly_refund_data):
+    """生成退款汇总表，每个月一个pivot table，形式与Summary表相同"""
     try:
         if not monthly_refund_data:
             print("[Refund Summary] 无退款数据")
             return None
         
-        # 收集所有月份的退款数据
-        all_refund_data = []
+        # 收集所有有数据的月份
+        valid_months = {}
         for month_key, refund_df in monthly_refund_data.items():
             if refund_df is not None and len(refund_df) > 0:
-                # 添加月份列
-                refund_df_with_month = refund_df.copy()
-                refund_df_with_month['month'] = month_key
-                all_refund_data.append(refund_df_with_month)
+                valid_months[month_key] = refund_df
         
-        if not all_refund_data:
+        if not valid_months:
             print("[Refund Summary] 无有效的退款数据")
             return None
         
-        # 合并所有退款数据
-        combined_refund_df = pd.concat(all_refund_data, ignore_index=True)
+        print(f"[Refund Summary] 为 {len(valid_months)} 个月份生成汇总表")
         
-        # 创建pivot表：月份为行，tax_code为列，Total_amount为值
-        pivot_table = combined_refund_df.pivot_table(
-            index=['month'],
-            columns=['tax_code'],
-            values='Total_amount',
-            aggfunc='sum',
-            fill_value=0
-        ).round(2)
+        # 为每个月份生成pivot table
+        pivot_tables = []
+        for month_key, refund_df in valid_months.items():
+            # 创建pivot table，tax_code为列，Total_amount为值
+            pivot = refund_df.pivot_table(
+                index=['tax_code'],
+                values='Total_amount',
+                aggfunc='sum',
+                fill_value=0,
+                margins=True,
+                margins_name='Grand Total'
+            ).round(2).reset_index()
+            
+            # 重命名列以更清晰
+            pivot.columns = ['Tax Code', 'Total Amount']
+            
+            pivot_tables.append((month_key, pivot))
         
-        # 添加总计行和总计列
-        pivot_table['Month Total'] = pivot_table.sum(axis=1)
-        pivot_table.loc['Tax Code Total'] = pivot_table.sum(axis=0)
-        
-        # 重置索引，使月份成为一列
-        pivot_table = pivot_table.reset_index()
-        
-        print(f"[Refund Summary] 生成汇总表，包含 {len(pivot_table)-1} 个月份数据")
-        return pivot_table
+        return pivot_tables
         
     except Exception as e:
         print(f"[Error] 生成退款汇总表失败: {str(e)}")
@@ -979,15 +976,138 @@ class AmazonProcessor(tk.Tk):
             start_date = datetime.strptime(self.start_cal.get_date(), "%Y-%m-%d")
             end_date = datetime.strptime(self.end_cal.get_date(), "%Y-%m-%d")
             
-            # 用于存储所有月份的退款数据
-            all_monthly_refund_data = {}
+            # 用于存储所有处理结果
+            all_results = {
+                'summary_tables': None,
+                'state_tax_data': state_tax_data,
+                'monthly_results': {},  # 存储每个月份的处理结果
+                'single_month_results': {}  # 存储单月处理结果
+            }
             
+            # 先处理所有数据，但不写入Excel
+            print("\n[步骤3/4] 处理数据...")
+            
+            # 1. 生成Summary表数据
+            all_results['summary_tables'] = generate_summary(raw_df, start_date, end_date)
+            
+            # 2. 处理分月或单月数据
+            if start_date.month != end_date.month or start_date.year != end_date.year:
+                print("\n[分月处理] 开始分月处理数据...")
+                
+                # 为order和refund分别创建分月数据
+                monthly_data = split_data_by_month(raw_df, start_date, end_date)
+                refund_monthly_data = split_data_by_month(refund_raw_df, start_date, end_date)
+                
+                print(f"[分月处理] 生成 {len(monthly_data)} 个月份的order数据")
+                print(f"[分月处理] 生成 {len(refund_monthly_data)} 个月份的refund数据")
+                
+                for month_key, month_df in monthly_data.items():
+                    print(f"\n[处理月份] {month_key}")
+                    month_start = month_df['posted-date'].min().to_pydatetime()
+                    month_end = month_df['posted-date'].max().to_pydatetime()
+                    
+                    # 处理QTY和Order数据
+                    qty_df, _, _ = process_qty_data(month_df, month_start, month_end)
+                    order_df = process_order_data(month_df)
+                    
+                    # 处理Refund数据
+                    refund_df = None
+                    if month_key in refund_monthly_data:
+                        refund_month_df = refund_monthly_data[month_key]
+                        print(f"[Refund处理] 月份 {month_key} 的refund数据行数: {len(refund_month_df)}")
+                        refund_df = process_refund_data(refund_month_df, tax_report_mapping)
+                    else:
+                        print(f"[Refund处理] 月份 {month_key} 无refund数据")
+                    
+                    # 执行分月合并
+                    merged_month = None
+                    order_import_df = None
+                    if qty_df is not None and order_df is not None:
+                        merged_month = merge_order_qty(order_df, qty_df, raw_source_df)
+                        if merged_month is not None:
+                            if tax_report_mapping:
+                                merged_month['tax_location'] = merged_month['order-id'].map(tax_report_mapping).fillna('')
+                            else:
+                                merged_month['tax_location'] = ''
+                            
+                            merged_month['tax_code'] = merged_month['tax_location'].apply(calculate_tax_code)
+                            
+                            if not merged_month.empty:
+                                order_import_df = generate_order_import_sheet(
+                                    merged_month, 
+                                    landed_cost_data,
+                                    pdb_us_data
+                                )
+                    
+                    # 存储月份结果
+                    all_results['monthly_results'][month_key] = {
+                        'qty_df': qty_df,
+                        'order_df': order_df,
+                        'refund_df': refund_df,
+                        'merged_month': merged_month,
+                        'order_import_df': order_import_df
+                    }
+                    
+            else:
+                # 处理非分月情况
+                print("\n[单月处理] 开始单月处理数据...")
+                qty_df, _, _ = process_qty_data(self.file_path.get(), start_date, end_date)
+                order_df = process_order_data(raw_df)
+                
+                # 处理Refund数据
+                print(f"[Refund处理] 单月refund数据行数: {len(refund_raw_df)}")
+                refund_df = process_refund_data(refund_raw_df, tax_report_mapping)
+                
+                # 执行整体合并
+                merged_all = None
+                order_import_df = None
+                if qty_df is not None and order_df is not None:
+                    merged_all = merge_order_qty(order_df, qty_df, raw_source_df)
+                    if merged_all is not None:
+                        if tax_report_mapping:
+                            merged_all['tax_location'] = merged_all['order-id'].map(tax_report_mapping).fillna('')
+                        else:
+                            merged_all['tax_location'] = ''
+                        
+                        merged_all['tax_code'] = merged_all['tax_location'].apply(calculate_tax_code)
+                        
+                        if not merged_all.empty:
+                            order_import_df = generate_order_import_sheet(
+                                merged_all, 
+                                landed_cost_data,
+                                pdb_us_data
+                            )
+                
+                # 存储单月结果
+                month_key = start_date.strftime("%Y%m")
+                all_results['single_month_results'] = {
+                    'qty_df': qty_df,
+                    'order_df': order_df,
+                    'refund_df': refund_df,
+                    'merged_all': merged_all,
+                    'order_import_df': order_import_df
+                }
+            
+            # 3. 生成Refund Summary数据（每月一个pivot table）
+            print("\n[步骤4/4] 生成退款汇总表...")
+            # 收集所有月份的退款数据
+            all_monthly_refund_data = {}
+            if all_results['monthly_results']:
+                for month_key, month_result in all_results['monthly_results'].items():
+                    all_monthly_refund_data[month_key] = month_result['refund_df']
+            elif all_results['single_month_results']:
+                month_key = start_date.strftime("%Y%m")
+                all_monthly_refund_data[month_key] = all_results['single_month_results']['refund_df']
+            
+            refund_summary_tables = generate_refund_summary_monthly(all_monthly_refund_data)
+            
+            # 现在按照正确的顺序写入Excel
+            print("\n[写入Excel] 开始写入Excel文件...")
             with pd.ExcelWriter(self.save_path.get()) as writer:
-                # 1. Summary 
-                pivot_tables = generate_summary(raw_df, start_date, end_date)
-                if pivot_tables:
+                # 1. 写入Summary表（第一位）
+                if all_results['summary_tables']:
                     start_row = 0
-                    for month, pivot in pivot_tables:
+                    for month, pivot in all_results['summary_tables']:
                         pivot.to_excel(
                             writer,
                             sheet_name='Summary',
@@ -997,13 +1117,39 @@ class AmazonProcessor(tk.Tk):
                         )
                         start_row += len(pivot) + 3
                 
-
-
+                # 2. 写入Refund Summary表（第二位）- 每月一个pivot table
+                if refund_summary_tables:
+                    start_row = 0
+                    for month_key, pivot in refund_summary_tables:
+                        # 添加月份标题
+                        month_title = pd.DataFrame({f"Month: {month_key}": [""]})
+                        month_title.to_excel(
+                            writer,
+                            sheet_name='Refund Summary',
+                            index=False,
+                            startrow=start_row,
+                            header=True
+                        )
+                        start_row += 2
+                        
+                        # 写入pivot table
+                        pivot.to_excel(
+                            writer,
+                            sheet_name='Refund Summary',
+                            index=False,
+                            startrow=start_row,
+                            float_format="%.2f"
+                        )
+                        start_row += len(pivot) + 3
+                    
+                    print("✅ 已生成 Refund Summary")
+                else:
+                    print("⚠️ 无退款数据，跳过生成 Refund Summary")
                 
-                # 3. Tax Report Filter
-                if state_tax_data is not None and not state_tax_data.empty:
+                # 3. 写入Tax Report筛选结果
+                if all_results['state_tax_data'] is not None and not all_results['state_tax_data'].empty:
                     try:
-                        state_tax_data.to_excel(
+                        all_results['state_tax_data'].to_excel(
                             writer, 
                             sheet_name='tax report filter',
                             index=False
@@ -1012,53 +1158,25 @@ class AmazonProcessor(tk.Tk):
                     except Exception as e:
                         print(f"写入Tax Report筛选结果失败: {str(e)}")
                 
-                # 3. Monthly processing logic
-                if start_date.month != end_date.month or start_date.year != end_date.year:
-                    print("\n[分月处理] 开始分月处理数据...")
-                    
-                    # 关键修复：为order和refund分别创建分月数据
-                    monthly_data = split_data_by_month(raw_df, start_date, end_date)
-                    refund_monthly_data = split_data_by_month(refund_raw_df, start_date, end_date)
-                    
-                    print(f"[分月处理] 生成 {len(monthly_data)} 个月份的order数据")
-                    print(f"[分月处理] 生成 {len(refund_monthly_data)} 个月份的refund数据")
-                    
-                    for month_key, month_df in monthly_data.items():
-                        print(f"\n[处理月份] {month_key}")
-                        month_start = month_df['posted-date'].min().to_pydatetime()
-                        month_end = month_df['posted-date'].max().to_pydatetime()
-                        
-                        # 处理QTY和Order数据
-                        qty_df, _, _ = process_qty_data(month_df, month_start, month_end)
-                        order_df = process_order_data(month_df)
-                        
-                        # 关键修复：处理Refund数据 - 使用对应月份的refund数据，并传入tax_report_mapping
-                        refund_df = None
-                        if month_key in refund_monthly_data:
-                            refund_month_df = refund_monthly_data[month_key]
-                            print(f"[Refund处理] 月份 {month_key} 的refund数据行数: {len(refund_month_df)}")
-                            refund_df = process_refund_data(refund_month_df, tax_report_mapping)
-                            # 存储退款数据用于汇总
-                            all_monthly_refund_data[month_key] = refund_df
-                        else:
-                            print(f"[Refund处理] 月份 {month_key} 无refund数据")
-                            all_monthly_refund_data[month_key] = None
-                        
-                        # 写入sheet
-                        if qty_df is not None:
-                            qty_df.to_excel(writer, sheet_name=f"{month_key}_qty", index=False)
+                # 4. 写入月份相关表
+                if all_results['monthly_results']:
+                    for month_key, month_result in all_results['monthly_results'].items():
+                        # 写入qty表
+                        if month_result['qty_df'] is not None:
+                            month_result['qty_df'].to_excel(writer, sheet_name=f"{month_key}_qty", index=False)
                             print(f"✅ 已生成 {month_key}_qty")
                         
-                        if order_df is not None:
-                            order_df.to_excel(writer, sheet_name=f"{month_key}_order", index=False)
+                        # 写入order表
+                        if month_result['order_df'] is not None:
+                            month_result['order_df'].to_excel(writer, sheet_name=f"{month_key}_order", index=False)
                             print(f"✅ 已生成 {month_key}_order")
                         
-                        # 关键修复：确保refund表一定会被写入，即使为空也创建空表
-                        if refund_df is not None and len(refund_df) > 0:
-                            refund_df.to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
-                            print(f"✅ 已生成 {month_key}_refund，包含 {len(refund_df)} 行数据")
+                        # 写入refund表
+                        if month_result['refund_df'] is not None and len(month_result['refund_df']) > 0:
+                            month_result['refund_df'].to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
+                            print(f"✅ 已生成 {month_key}_refund，包含 {len(month_result['refund_df'])} 行数据")
                         else:
-                            # 创建空的refund表，确保表头存在（包含tax_location和tax_code）
+                            # 创建空的refund表
                             empty_refund_df = pd.DataFrame(columns=[
                                 'order-id', 'shipment-id', 'sku',
                                 'Product Amount', 'Product Tax', 'tax_rate',
@@ -1068,68 +1186,43 @@ class AmazonProcessor(tk.Tk):
                             empty_refund_df.to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
                             print(f"⚠️ {month_key}_refund 无数据，已创建空表")
                         
-                        # 执行分月合并
-                        if qty_df is not None and order_df is not None:
-                            merged_month = merge_order_qty(order_df, qty_df, raw_source_df)
-                            if merged_month is not None:
-                                if tax_report_mapping:
-                                    merged_month['tax_location'] = merged_month['order-id'].map(tax_report_mapping).fillna('')
-                                else:
-                                    merged_month['tax_location'] = ''
-                                
-                                merged_month['tax_code'] = merged_month['tax_location'].apply(calculate_tax_code)
-                                
-                                merged_month.to_excel(
-                                    writer,
-                                    sheet_name=f"{month_key}_order_details",
-                                    index=False
-                                )
-                                print(f"✅ 已生成 {month_key}_order_details")
-
-                                if not merged_month.empty:
-                                    order_import_df = generate_order_import_sheet(
-                                        merged_month, 
-                                        landed_cost_data,
-                                        pdb_us_data
-                                    )
-                                    
-                                    if not order_import_df.empty:
-                                        order_import_df.to_excel(
-                                            writer,
-                                            sheet_name=f"{month_key}_order_import",
-                                            index=False
-                                        )
-                                        print(f"✅ 已生成 {month_key}_order_import")
+                        # 写入order_details表
+                        if month_result['merged_month'] is not None:
+                            month_result['merged_month'].to_excel(
+                                writer,
+                                sheet_name=f"{month_key}_order_details",
+                                index=False
+                            )
+                            print(f"✅ 已生成 {month_key}_order_details")
+                        
+                        # 写入order_import表
+                        if month_result['order_import_df'] is not None and not month_result['order_import_df'].empty:
+                            month_result['order_import_df'].to_excel(
+                                writer,
+                                sheet_name=f"{month_key}_order_import",
+                                index=False
+                            )
+                            print(f"✅ 已生成 {month_key}_order_import")
+                
+                elif all_results['single_month_results']:
+                    single_result = all_results['single_month_results']
                     
-                else:
-                    # 处理非分月情况
-                    print("\n[单月处理] 开始单月处理数据...")
-                    qty_df, _, _ = process_qty_data(self.file_path.get(), start_date, end_date)
-                    order_df = process_order_data(raw_df)
-                    
-                    # 关键修复：处理Refund数据，传入tax_report_mapping
-                    print(f"[Refund处理] 单月refund数据行数: {len(refund_raw_df)}")
-                    refund_df = process_refund_data(refund_raw_df, tax_report_mapping)
-                    
-                    # 存储单月退款数据用于汇总
-                    month_key = start_date.strftime("%Y%m")
-                    all_monthly_refund_data[month_key] = refund_df
-                    
-                    # 写入sheet
-                    if qty_df is not None:
-                        qty_df.to_excel(writer, sheet_name='qty', index=False)
+                    # 写入qty表
+                    if single_result['qty_df'] is not None:
+                        single_result['qty_df'].to_excel(writer, sheet_name='qty', index=False)
                         print("✅ 已生成 qty")
                     
-                    if order_df is not None:
-                        order_df.to_excel(writer, sheet_name='order', index=False)
+                    # 写入order表
+                    if single_result['order_df'] is not None:
+                        single_result['order_df'].to_excel(writer, sheet_name='order', index=False)
                         print("✅ 已生成 order")
                     
-                    # 关键修复：确保refund表一定会被写入
-                    if refund_df is not None and len(refund_df) > 0:
-                        refund_df.to_excel(writer, sheet_name='refund', index=False)
-                        print(f"✅ 已生成 refund，包含 {len(refund_df)} 行数据")
+                    # 写入refund表
+                    if single_result['refund_df'] is not None and len(single_result['refund_df']) > 0:
+                        single_result['refund_df'].to_excel(writer, sheet_name='refund', index=False)
+                        print(f"✅ 已生成 refund，包含 {len(single_result['refund_df'])} 行数据")
                     else:
-                        # 创建空的refund表（包含tax_location和tax_code）
+                        # 创建空的refund表
                         empty_refund_df = pd.DataFrame(columns=[
                             'order-id', 'shipment-id', 'sku', 
                             'Product Amount', 'Product Tax', 'tax_rate',
@@ -1139,52 +1232,23 @@ class AmazonProcessor(tk.Tk):
                         empty_refund_df.to_excel(writer, sheet_name='refund', index=False)
                         print("⚠️ refund 无数据，已创建空表")
                     
-                    # 执行整体合并
-                    if qty_df is not None and order_df is not None:
-                        merged_all = merge_order_qty(order_df, qty_df, raw_source_df)
-                        if merged_all is not None:
-                            if tax_report_mapping:
-                                merged_all['tax_location'] = merged_all['order-id'].map(tax_report_mapping).fillna('')
-                            else:
-                                merged_all['tax_location'] = ''
-                            
-                            merged_all['tax_code'] = merged_all['tax_location'].apply(calculate_tax_code)
-                            
-                            merged_all.to_excel(
-                                writer,
-                                sheet_name='order_details',
-                                index=False
-                            )
-                            print("✅ 已生成 order_details")
-
-                            if not merged_all.empty:
-                                order_import_df = generate_order_import_sheet(
-                                    merged_all, 
-                                    landed_cost_data,
-                                    pdb_us_data
-                                )
-                                
-                                if not order_import_df.empty:
-                                    order_import_df.to_excel(
-                                        writer,
-                                        sheet_name='order_import',
-                                        index=False
-                                    )
-                                    print("✅ 已生成 order_import")
-                
-                # 4. 生成并写入Refund Summary表
-                print("\n[步骤4/4] 生成退款汇总表...")
-                refund_summary_df = generate_refund_summary(all_monthly_refund_data)
-                if refund_summary_df is not None:
-                    refund_summary_df.to_excel(
-                        writer,
-                        sheet_name='Refund Summary',
-                        index=False,
-                        float_format="%.2f"
-                    )
-                    print("✅ 已生成 Refund Summary")
-                else:
-                    print("⚠️ 无退款数据，跳过生成 Refund Summary")
+                    # 写入order_details表
+                    if single_result['merged_all'] is not None:
+                        single_result['merged_all'].to_excel(
+                            writer,
+                            sheet_name='order_details',
+                            index=False
+                        )
+                        print("✅ 已生成 order_details")
+                    
+                    # 写入order_import表
+                    if single_result['order_import_df'] is not None and not single_result['order_import_df'].empty:
+                        single_result['order_import_df'].to_excel(
+                            writer,
+                            sheet_name='order_import',
+                            index=False
+                        )
+                        print("✅ 已生成 order_import")
 
             messagebox.showinfo(
                 "Processing Complete",
