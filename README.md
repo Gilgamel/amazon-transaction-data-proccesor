@@ -11,7 +11,9 @@ The py file of this project has been packaged into exe, which can be used by any
 3. Generate order details by month. 
 4. Match with the SKU manual mapping Excel file on Google via API. 
 5. Summarize quantity and total amount based on SKU and tax code (if applicable). 
-6. Add shipping fee to {month_key}_order_details based on tax code.
+6. Add shipping fee to {month_key}_order_import based on tax code.
+7. Add {month_key}_refund with tax location, tax code and total amount.
+8. Add refund summary to pivot refund details per month per tax code.
 
 </br>
 
