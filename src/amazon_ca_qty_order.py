@@ -613,17 +613,23 @@ def process_refund_data(refund_raw_df, tax_report_mapping=None):
         else:
             pivot_df['tax_location'] = ''
         
-        pivot_df['tax_code'] = pivot_df['tax_location'].apply(calculate_tax_code)
-        
-        if 'Shipping Tax' not in pivot_df.columns:
-            pivot_df['Shipping Tax'] = 0
-
+        # 计算tax_rate
         pivot_df['tax_rate'] = np.where(
             pivot_df['Product Amount'] != 0,
             (pivot_df['Product Tax'] / pivot_df['Product Amount']).round(2),
             0
         )
         pivot_df['tax_rate'] = pivot_df['tax_rate'].apply(lambda x: f"{x:.0%}")
+        
+        # 新增逻辑：如果tax_rate是0%，则tax_code = OUT OF SCOPE，否则像之前一样处理
+        pivot_df['tax_code'] = np.where(
+            pivot_df['tax_rate'] == '0%',
+            'OUT OF SCOPE',
+            pivot_df['tax_location'].apply(calculate_tax_code)
+        )
+        
+        if 'Shipping Tax' not in pivot_df.columns:
+            pivot_df['Shipping Tax'] = 0
 
         # 调整列顺序，将tax_location和tax_code放在前面
         preferred_start = ['order-id', 'shipment-id', 'sku', 
@@ -1030,7 +1036,12 @@ class AmazonProcessor(tk.Tk):
                             else:
                                 merged_month['tax_location'] = ''
                             
-                            merged_month['tax_code'] = merged_month['tax_location'].apply(calculate_tax_code)
+                            # 新增逻辑：如果tax_rate是0%，则tax_code = OUT OF SCOPE，否则像之前一样处理
+                            merged_month['tax_code'] = np.where(
+                                merged_month['tax_rate'] == '0%',
+                                'OUT OF SCOPE',
+                                merged_month['tax_location'].apply(calculate_tax_code)
+                            )
                             
                             if not merged_month.empty:
                                 order_import_df = generate_order_import_sheet(
@@ -1069,7 +1080,12 @@ class AmazonProcessor(tk.Tk):
                         else:
                             merged_all['tax_location'] = ''
                         
-                        merged_all['tax_code'] = merged_all['tax_location'].apply(calculate_tax_code)
+                        # 新增逻辑：如果tax_rate是0%，则tax_code = OUT OF SCOPE，否则像之前一样处理
+                        merged_all['tax_code'] = np.where(
+                            merged_all['tax_rate'] == '0%',
+                            'OUT OF SCOPE',
+                            merged_all['tax_location'].apply(calculate_tax_code)
+                        )
                         
                         if not merged_all.empty:
                             order_import_df = generate_order_import_sheet(
