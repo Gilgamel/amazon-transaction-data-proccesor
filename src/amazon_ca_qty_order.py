@@ -943,7 +943,9 @@ class AmazonProcessor(tk.Tk):
                     if 'Jurisdiction_Level' not in tax_report_df.columns or 'Jurisdiction_Name' not in tax_report_df.columns:
                         raise ValueError("Tax Report文件中缺少 'Jurisdiction_Level' 或 'Jurisdiction_Name' 列")
                     
-                    state_tax_data = tax_report_df[tax_report_df['Jurisdiction_Level'] == 'State']
+                    state_tax_data = tax_report_df[
+                        (tax_report_df['Jurisdiction_Level'] == 'State') &
+                        (tax_report_df['Tax_Address_Role'] == 'ShipTo')]
                     print(f"[Tax Report] 筛选出 {len(state_tax_data)} 条State级别的记录")
                     
                     for _, row in state_tax_data.iterrows():

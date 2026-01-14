@@ -11,7 +11,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request  # <--- 关键修复
+from google.auth.transport.requests import Request 
 import pickle
 import webbrowser
 from dotenv import load_dotenv
@@ -106,13 +106,13 @@ def get_google_creds():
         raise  # 向上传递异常以中断流程
 
 
-# ================== Google Sheet集成部分 ==================
+# ================== Google Sheet ==================
 def get_resource_path(relative_path):
     """智能资源路径定位（修复开发模式路径）"""
     if getattr(sys, 'frozen', False):
         base_path = sys._MEIPASS
     else:
-        # 确保开发模式路径正确：src目录 -> 父目录（项目根目录）
+        
         base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     
     full_path = os.path.join(base_path, relative_path)
@@ -120,28 +120,28 @@ def get_resource_path(relative_path):
     return full_path
 
 
-# ================== 新增函数：加载Google Sheet数据 ==================
+# ================== ==================
 def load_gsheet_data(sheet_name):
     """加载指定Google Sheet并返回SKU到cost的字典"""
     try:
         print(f"\n[Google Sheet] 开始加载 {sheet_name} 数据")
         
-        # 复用现有认证流程
+        
         creds = get_google_creds()
         client = gspread.authorize(creds)
         
-        # 打开指定名称的工作表
+        
         spreadsheet = client.open(sheet_name)
         sheet = spreadsheet.sheet1
         
-        # 获取全部数据（包含标题）
+        
         rows = sheet.get_all_values()
         if not rows:
             print(f"[警告] {sheet_name} 表中无数据")
             return {}
         
-        # 验证列结构
-        if len(rows[0]) < 11:  # 确保至少有11列
+        
+        if len(rows[0]) < 11:  
             raise ValueError(f"{sheet_name} 表结构错误：需要至少11列")
         
         # 构建SKU-Cost映射
